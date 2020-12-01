@@ -47,7 +47,8 @@ Following is a minimum, working, configuration example of nProbe and ntopng to o
 
 Option :code:`-T "@NTOPNG@"`, known as template, tells nprobe the minimum set of fields it has to export in order to ensure interoperability with ntopng. Specifying this option is recommended when using nProbe with ntopng. Other collectors may require different sets of fields in order to work. Templates and exported fields are discussed below.
 
-For more information about configuring nProbe for ntopng check out https://www.ntop.org/nprobe/best-practices-for-the-collection-of-flows-with-ntopng-and-nprobe .
+For more information about configuring nProbe for ntopng check out https://www.ntop.org/nprobe/best-practices-for-the-collection-of-flows-with-ntopng-and-nprobe.
+
 
 Exported Flow Fields
 ====================
@@ -83,7 +84,7 @@ There are two main ways to gather flows from multiple NetFlow/sFlow exporters an
 
 2. By running multiple nProbe instances, one for each exporter. This method is the most performant
    because each exported data will be handled by a separate thread into ntopng so it can leverage
-   the cpu cores of a multicore system.
+   the CPU cores of a multicore system.
 
 Here is an example on how to configure multiple nProbe instances (second approach):
 
@@ -133,6 +134,11 @@ Note the two options:
 
 In essence the roles of nProbe and ntopng have been reverted so they behave as NetFlow/IPFIX probes do. Only the roles have been reverted. Everything else will continue to work normally and the flows will still go from nProbe to ntopng.
 
+Collector Passthrough
+=====================
+
+nProbe can be configured with option :code:`--collector-passthrough` to collect NetFlow/sFlow and immediately send it verbatim to ntopng. This may be beneficial for performances in high-speed environments. See https://www.ntop.org/guides/nprobe/case_study/flow_collection.html for a full discussion.
+
 Data Encryption
 ===============
 
@@ -162,10 +168,10 @@ ntopng saves the ZMQ public/private keypairs under /var/lib/ntopng/<interface id
 Quick Start
 ===========
 
-A sample configuration file for running ntopng as ZMQ collector for nProbe is installed on unix 
+A sample configuration file for running ntopng as ZMQ collector for nProbe is installed on Unix 
 systems under /etc/ntopng/ntopng.conf.nprobe.sample. As described in the *Running ntopng as a Daemon*
 section, the configuration file has to be named ntopng.conf and must be placed under /etc/ntopng/ when 
-running ntopng as a daemon on unix systems with *init.d* or *systemd* support. In order to enable 
+running ntopng as a daemon on Unix systems with *init.d* or *systemd* support. In order to enable 
 this configuration, you should replace the configuration file with the sample configuration and
 restart the service:
 
@@ -178,7 +184,7 @@ Please note that the sample configuration assumes that both ntopng and nProbe ar
 same (local) host. In case they run on separate machines, the configuration file has to be changed 
 with the address of the machine hosting nProbe.
 
-Similarly, a sample configuration file for nProbe is also installed (by the *nprobe* package) on unix 
+Similarly, a sample configuration file for nProbe is also installed (by the *nprobe* package) on Unix 
 systems under /etc/nprobe/nprobe.conf.ntopng.sample. In order to enable this configuration, also in
 this case, you should replace the configuration file with the sample configuration and restart the 
 service:

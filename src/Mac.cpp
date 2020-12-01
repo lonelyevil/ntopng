@@ -37,7 +37,7 @@ Mac::Mac(NetworkInterface *_iface, u_int8_t _mac[6])
 #endif
   model = NULL, ssid = NULL;
   stats_reset_requested = data_delete_requested = false;
-  stats = new MacStats(_iface);
+  stats = new (std::nothrow) MacStats(_iface);
   stats_shadow = NULL;
   last_stats_reset = ntop->getLastStatsReset(); /* assume fresh stats, may be changed by deserialize */
 
@@ -186,9 +186,14 @@ void Mac::lua(lua_State* vm, bool show_details, bool asListElement) {
 /* *************************************** */
 
 bool Mac::isNull() const {
-  u_int8_t zero_mac[6] = {0};
+  u_int8_t zero_mac[3] = { 0 };
 
-  return !memcmp(mac, zero_mac, sizeof(mac));
+  /*
+    We need to compare only the manufacturer (3 byets instead of 6)
+    as there might be variations of 00:00:00:00:00:00
+    such as 00:00:00:00:01:01 that are basically alike
+  */
+  return(!memcmp(mac, zero_mac, sizeof(zero_mac)));
 }
 
 /* *************************************** */
@@ -404,7 +409,7 @@ void Mac::checkDataReset() {
 
 void Mac::checkStatsReset() {
   if(statsResetRequested()) {
-    MacStats *new_stats = new MacStats(iface);
+    MacStats *new_stats = new (std::nothrow) MacStats(iface);
     stats_shadow = stats;
     stats = new_stats;
     last_stats_reset = ntop->getLastStatsReset();

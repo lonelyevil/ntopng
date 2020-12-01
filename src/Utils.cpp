@@ -103,7 +103,7 @@ typedef struct {
 
 typedef struct {
   u_int8_t header_over;
-  char outbuf[2*65536];
+  char outbuf[3*65536];
   u_int num_bytes;
   lua_State* vm;
   bool return_content;
@@ -132,7 +132,7 @@ static size_t curl_hdf(char *buffer, size_t size, size_t nitems, void *userp);
 
 /* ****************************************************** */
 
-char* Utils::jsonLabel(int label, const char *label_str,char *buf, u_int buf_len){
+char* Utils::jsonLabel(int label, const char *label_str,char *buf, u_int buf_len) {
   if(ntop->getPrefs()->json_labels_as_strings()) {
     snprintf(buf, buf_len, "%s", label_str);
   } else
@@ -1242,6 +1242,76 @@ bool Utils::purifyHTTPparam(char * const param, bool strict, bool allowURL, bool
   return(false);
 }
 
+/* ************************************************************ */
+
+bool Utils::sendTCPData(char *host, int port, char *data, int timeout /* msec */) {
+  struct hostent *server = NULL;
+  struct sockaddr_in serv_addr;
+  int sockfd = -1;
+  int retval;
+  bool rc = false;
+
+  server = gethostbyname(host);
+  if (server == NULL)
+    return false;
+
+  memset((char*)&serv_addr, 0, sizeof(serv_addr));
+  serv_addr.sin_family = AF_INET;
+  memcpy((char*)&serv_addr.sin_addr.s_addr, (char*)server->h_addr, server->h_length);
+  serv_addr.sin_port = htons(port);
+
+  sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+  if (sockfd < 0) {
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "Unable to create socket");
+    return false;
+  }
+
+#ifndef WIN32
+  if (timeout == 0) {
+    retval = fcntl(sockfd, F_SETFL, fcntl(sockfd,F_GETFL,0) | O_NONBLOCK);
+    if (retval == -1) {
+      ntop->getTrace()->traceEvent(TRACE_WARNING, "Error setting NONBLOCK flag");
+      closesocket(sockfd);
+      return false;
+    }
+  } else {
+    struct timeval tv_timeout;
+    tv_timeout.tv_sec  = timeout/1000;
+    tv_timeout.tv_usec = (timeout%1000)*1000;
+    retval = setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv_timeout, sizeof(tv_timeout));
+    if (retval == -1) {
+      ntop->getTrace()->traceEvent(TRACE_WARNING, "Error setting send timeout: %s", strerror(errno));
+      closesocket(sockfd);
+      return false;
+    }
+  }
+#endif
+
+  if (connect(sockfd,(struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0
+     && (errno == ECONNREFUSED || errno == EALREADY || errno == EAGAIN ||
+	 errno == ENETUNREACH  || errno == ETIMEDOUT )) {
+    ntop->getTrace()->traceEvent(TRACE_WARNING,"Could not connect to remote party");
+    closesocket(sockfd);
+    return false;
+  }
+
+  //ntop->getTrace()->traceEvent(TRACE_NORMAL, "Sending '%s' to %s:%d",
+  //  data, host, port);
+
+  rc = true;
+  retval = send(sockfd, data, strlen(data), 0);
+  if (retval <= 0) {
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "Send failed: %s (%d)",
+      strerror(errno), errno);
+    rc = false;
+  }
+
+  closesocket(sockfd);
+
+  return rc;
+}
+
 /* **************************************************** */
 
 /* holder for curl fetch */
@@ -1397,7 +1467,7 @@ static void readCurlStats(CURL *curl, HTTPTranferStats *stats, lua_State* vm) {
 bool Utils::postHTTPJsonData(char *username, char *password, char *url,
 			     char *json, int timeout, HTTPTranferStats *stats) {
   CURL *curl;
-  bool ret = true;
+  bool ret = false;
 
   curl = curl_easy_init();
   if(curl) {
@@ -1445,10 +1515,15 @@ bool Utils::postHTTPJsonData(char *username, char *password, char *url,
       ntop->getTrace()->traceEvent(TRACE_WARNING,
 				   "Unable to post data to (%s): %s",
 				   url, curl_easy_strerror(res));
-      ret = false;
     } else {
       ntop->getTrace()->traceEvent(TRACE_INFO, "Posted JSON to %s", url);
       readCurlStats(curl, stats, NULL);
+
+      long http_code = 0;
+      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+      // Success if http_code is 2xx, failure otherwise
+      if(http_code >= 200 && http_code <= 299)
+	ret = true;
     }
     
     /* always cleanup */
@@ -1654,15 +1729,21 @@ bool Utils::postHTTPTextFile(lua_State* vm, char *username, char *password, char
 
 /* **************************************** */
 
-bool Utils::sendMail(char *from, char *to, char *message, char *smtp_server, char *username, char *password) {
+bool Utils::sendMail(lua_State* vm, char *from, char *to, char *cc, char *message,
+		     char *smtp_server, char *username, char *password) {
+  bool ret = true;
+  const char *ret_str = "";
+
 #ifdef HAVE_CURL_SMTP
   CURL *curl;
   CURLcode res;
-  bool ret = true;
   struct curl_slist *recipients = NULL;
   struct snmp_upload_status *upload_ctx = (struct snmp_upload_status*) calloc(1, sizeof(struct snmp_upload_status));
 
-  if(!upload_ctx) return false;
+  if(!upload_ctx) {
+    ret = false;
+    goto out;
+  }  
 
   upload_ctx->lines = message;
   curl = curl_easy_init();
@@ -1684,6 +1765,8 @@ bool Utils::sendMail(char *from, char *to, char *message, char *smtp_server, cha
     curl_easy_setopt(curl, CURLOPT_MAIL_FROM, from);
 
     recipients = curl_slist_append(recipients, to);
+    if(cc && cc[0])
+      recipients = curl_slist_append(recipients, cc);
     curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients);
 
     curl_easy_setopt(curl, CURLOPT_READFUNCTION, curl_smtp_payload_source);
@@ -1698,6 +1781,7 @@ bool Utils::sendMail(char *from, char *to, char *message, char *smtp_server, cha
     }
 
     res = curl_easy_perform(curl);
+    ret_str = curl_easy_strerror(res);
 
     if(res != CURLE_OK) {
       ntop->getTrace()->traceEvent(TRACE_WARNING,
@@ -1713,11 +1797,28 @@ bool Utils::sendMail(char *from, char *to, char *message, char *smtp_server, cha
   }
 
   free(upload_ctx);
-  return ret;
+
+ out:
 #else
-  ntop->getTrace()->traceEvent(TRACE_ERROR, "SMTP support is not available");
-  return(false);
+  ret = false;
+  ret_str = "SMTP support is not available";
 #endif
+
+  if(vm) {
+    /*
+    If a lua VM has been passed as parameter, return code and return message are pushed into the lua stack.
+    */
+    lua_newtable(vm);
+    lua_push_bool_table_entry(vm, "success", ret);
+    lua_push_str_table_entry(vm, "msg", ret_str);
+  } else if (!ret)
+    /*
+      If not lua VM has been passed, in case of error, a message is logged to stdout
+     */
+    ntop->getTrace()->traceEvent(TRACE_WARNING,
+				 "Unable to send email to (%s): %s. Run ntopng with -v6 for more details.",
+				 smtp_server, ret_str);
+  return ret;
 }
 
 /* **************************************** */
@@ -1834,18 +1935,19 @@ static int progress_callback(void *clientp, double dltotal, double dlnow, double
 /* **************************************** */
 
 /* form_data is in format param=value&param1=&value1... */
-bool Utils::httpGetPost(lua_State* vm, char *url, char *username,
-			char *password, int timeout,
-			bool return_content,
+bool Utils::httpGetPost(lua_State* vm, char *url,
+			/* NOTE if user_header_token != NULL, username AND password are ignored, and vice-versa */
+			char *username, char *password, char *user_header_token,
+			int timeout, bool return_content,
 			bool use_cookie_authentication,
 			HTTPTranferStats *stats, const char *form_data,
-      char *write_fname, bool follow_redirects, int ip_version) {
-  CURL *curl;
+			char *write_fname, bool follow_redirects, int ip_version) {
+  CURL *curl = curl_easy_init();
   FILE *out_f = NULL;
   bool ret = true;
-
-  curl = curl_easy_init();
-
+  char tokenBuffer[64];  
+  bool used_tokenBuffer = false;
+  
   if(curl) {
     DownloadState *state = NULL;
     ProgressState progressState;
@@ -1853,31 +1955,47 @@ bool Utils::httpGetPost(lua_State* vm, char *url, char *username,
     long response_code;
     char *content_type, *redirection;
     char ua[64];
-
+    
     memset(stats, 0, sizeof(HTTPTranferStats));
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
-    if(username || password) {
-      char auth[64];
-
-      if(use_cookie_authentication) {
-	snprintf(auth, sizeof(auth),
-		 "user=%s; password=%s",
-		 username ? username : "",
-		 password ? password : "");
-	curl_easy_setopt(curl, CURLOPT_COOKIE, auth);
-      } else {
-	snprintf(auth, sizeof(auth), "%s:%s",
-		 username ? username : "",
-		 password ? password : "");
-	curl_easy_setopt(curl, CURLOPT_USERPWD, auth);
-	curl_easy_setopt(curl, CURLOPT_HTTPAUTH, (long)CURLAUTH_BASIC);
+    if(user_header_token != NULL) {
+      snprintf(tokenBuffer, sizeof(tokenBuffer), "Authorization: Token %s", user_header_token);
+    } else {
+      tokenBuffer[0] = '\0';
+      
+      if(username || password) {
+	char auth[64];
+	
+	if(use_cookie_authentication) {
+	  snprintf(auth, sizeof(auth),
+		   "user=%s; password=%s",
+		   username ? username : "",
+		   password ? password : "");
+	  curl_easy_setopt(curl, CURLOPT_COOKIE, auth);
+	} else {
+	  if(username && (username[0] != '\0')) {
+	    snprintf(auth, sizeof(auth), "%s:%s",
+		     username ? username : "",
+		     password ? password : "");
+	    curl_easy_setopt(curl, CURLOPT_USERPWD, auth);
+	    curl_easy_setopt(curl, CURLOPT_HTTPAUTH, (long)CURLAUTH_BASIC);
+	  }
+	}
       }
     }
-
+    
     if(!strncmp(url, "https", 5)) {
       curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L); 
+
+#ifdef CURLOPT_SSL_ENABLE_ALPN
+      curl_easy_setopt(curl, CURLOPT_SSL_ENABLE_ALPN, 1L); /* Enable ALPN */
+#endif
+
+#ifdef CURLOPT_SSL_ENABLE_NPN
+      curl_easy_setopt(curl, CURLOPT_SSL_ENABLE_NPN, 1L);  /* Negotiate HTTP/2 if available */
+#endif
     }
 
     if(form_data) {
@@ -1885,8 +2003,30 @@ bool Utils::httpGetPost(lua_State* vm, char *url, char *username,
       curl_easy_setopt(curl, CURLOPT_POST, 1L);
       curl_easy_setopt(curl, CURLOPT_POSTFIELDS, form_data);
       curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(form_data));
+
+      if(form_data[0] == '{' /* JSON */) {
+	struct curl_slist *hs = NULL;
+	
+	hs = curl_slist_append(hs, "Content-Type: application/json");
+
+	if(tokenBuffer[0] != '\0') {
+	  hs = curl_slist_append(hs, tokenBuffer);
+	  used_tokenBuffer = true;
+	}
+
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hs);
+      }
     }
 
+    if((tokenBuffer[0] != '\0') && (!used_tokenBuffer)) {
+      struct curl_slist *hs = NULL;
+
+      snprintf(tokenBuffer, sizeof(tokenBuffer), "Authorization: Token %s", user_header_token);
+      hs = curl_slist_append(hs, tokenBuffer);
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hs);
+      used_tokenBuffer = true;
+    }
+    
     if(write_fname) {
       ntop->fixPath(write_fname);
       out_f = fopen(write_fname, "wb");
@@ -1946,9 +2086,12 @@ bool Utils::httpGetPost(lua_State* vm, char *url, char *username,
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, timeout*1000);
 #endif
 
-    snprintf(ua, sizeof(ua), "%s [%s][%s]",
-	     PACKAGE_STRING, PACKAGE_MACHINE, PACKAGE_OS);
+    if(ntop->getTrace()->get_trace_level() > TRACE_LEVEL_NORMAL)
+      curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    
+    snprintf(ua, sizeof(ua), "%s/%s/%s", PACKAGE_STRING, PACKAGE_MACHINE, PACKAGE_OS);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, ua);
+    // curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl/7.54.0");
 
     if(vm) lua_newtable(vm);
 
@@ -2004,12 +2147,12 @@ bool Utils::httpGetPost(lua_State* vm, char *url, char *username,
 /* **************************************** */
 
 long Utils::httpGet(const char * const url,
-		    const char * const username, const char * const password,
-		    int timeout,
-		    char * const resp, const u_int resp_len) {
-  CURL *curl;
+		    /* NOTE if user_header_token != NULL, username AND password are ignored, and vice-versa */
+		    const char * const username, const char * const password, const char * const user_header_token,
+		    int timeout, char * const resp, const u_int resp_len) {
+  CURL *curl = curl_easy_init();
   long response_code = 0;
-  curl = curl_easy_init();
+  char tokenBuffer[64];
 
   if(curl) {
     char *content_type;
@@ -2021,16 +2164,24 @@ long Utils::httpGet(const char * const url,
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
-    if(username || password) {
-      char auth[64];
+    if(user_header_token == NULL) {
+      if(username || password) {
+	char auth[64];
+	
+	snprintf(auth, sizeof(auth), "%s:%s",
+		 username ? username : "",
+		 password ? password : "");
+	curl_easy_setopt(curl, CURLOPT_USERPWD, auth);
+	curl_easy_setopt(curl, CURLOPT_HTTPAUTH, (long)CURLAUTH_BASIC);
+      }
+    } else {
+      struct curl_slist *hs = NULL;
 
-      snprintf(auth, sizeof(auth), "%s:%s",
-	       username ? username : "",
-	       password ? password : "");
-      curl_easy_setopt(curl, CURLOPT_USERPWD, auth);
-      curl_easy_setopt(curl, CURLOPT_HTTPAUTH, (long)CURLAUTH_BASIC);
+      snprintf(tokenBuffer, sizeof(tokenBuffer), "Authorization: Token %s", user_header_token);
+      hs = curl_slist_append(hs, tokenBuffer);
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hs);
     }
-
+    
     if(!strncmp(url, "https", 5)) {
       curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
       curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
@@ -2331,19 +2482,10 @@ u_int64_t Utils::macaddr_int(const u_int8_t *mac) {
 
 void Utils::readMac(char *_ifname, dump_mac_t mac_addr) {
   char ifname[32];
-  char *colon, *at;
   macstr_t mac_addr_buf;
   int res;
 
-  /* Handle PF_RING interfaces zc:ens2f1@3 */
-  colon = strchr(_ifname, ':');
-  if(colon != NULL) /* removing pf_ring module prefix (e.g. zc:ethX) */
-    _ifname = colon+1;
-
-  snprintf(ifname, sizeof(ifname), "%s", _ifname);
-  at = strchr(ifname, '@');
-  if(at != NULL)
-    at[0] = '\0';
+  ifname2devname(_ifname, ifname, sizeof(ifname));
 
 #if defined(__FreeBSD__) || defined(__APPLE__)
   struct ifaddrs *ifap, *ifaptr;
@@ -2455,31 +2597,36 @@ u_int16_t Utils::getIfMTU(const char *ifname) {
 
 /* **************************************** */
 
-u_int32_t Utils::getMaxIfSpeed(const char *ifname) {
+u_int32_t Utils::getMaxIfSpeed(const char *_ifname) {
 #if defined(linux) && (!defined(__GNUC_RH_RELEASE__) || (__GNUC_RH_RELEASE__ != 44))
   int sock, rc;
   struct ifreq ifr;
   struct ethtool_cmd edata;
   u_int32_t ifSpeed = 1000;
+  char ifname[32];
 
-  if(strncmp(ifname, "zc:", 3) == 0) ifname = &ifname[3];
-
-  if(strchr(ifname, ',')) {
+  if(strchr(_ifname, ',')) {
     /* These are interfaces with , (e.g. eth0,eth1) */
     char ifaces[128], *iface, *tmp;
     u_int32_t speed = 0;
 
-    snprintf(ifaces, sizeof(ifaces), "%s", ifname);
+    snprintf(ifaces, sizeof(ifaces), "%s", _ifname);
     iface = strtok_r(ifaces, ",", &tmp);
 
     while(iface) {
-      u_int32_t thisSpeed = getMaxIfSpeed(iface);
+      u_int32_t thisSpeed;
 
+      ifname2devname(iface, ifname, sizeof(ifname));
+
+      thisSpeed = getMaxIfSpeed(ifname);
       if(thisSpeed > speed) speed = thisSpeed;
+
       iface = strtok_r(NULL, ",", &tmp);
     }
 
     return(speed);
+  } else {
+    ifname2devname(_ifname, ifname, sizeof(ifname));
   }
 
   memset(&ifr, 0, sizeof(struct ifreq));
@@ -2990,6 +3137,14 @@ patricia_node_t* Utils::ptree_match(const patricia_tree_t *tree, int family, con
   else
     fill_prefix_mac(&prefix, (u_int8_t*)addr, bits, tree->maxbits);
 
+  if (prefix.bitlen > tree->maxbits) { /* safety check */
+    char buf[128];
+    ntop->getTrace()->traceEvent(TRACE_ERROR, "Bad radix tree lookup for %s (prefix len = %u, tree max len = %u)",
+      Utils::ptree_prefix_print(&prefix, buf, sizeof(buf)) ? buf : "-",
+      prefix.bitlen, tree->maxbits);
+    return NULL;
+  }
+
   return(patricia_search_best(tree, &prefix));
 }
 
@@ -3153,7 +3308,7 @@ void Utils::initRedis(Redis **r, const char *redis_host, const char *redis_passw
 		      u_int16_t redis_port, u_int8_t _redis_db_id, bool giveup_on_failure) {
   if(r) {
     if(*r) delete(*r);
-    (*r) = new Redis(redis_host, redis_password, redis_port, _redis_db_id, giveup_on_failure);
+    (*r) = new (std::nothrow) Redis(redis_host, redis_password, redis_port, _redis_db_id, giveup_on_failure);
   }
 }
 
@@ -3269,12 +3424,12 @@ u_int32_t Utils::getHostManagementIPv4Address() {
 
 /* ****************************************************** */
 
-bool Utils::isInterfaceUp(char *ifname) {
+bool Utils::isInterfaceUp(char *_ifname) {
 #ifdef WIN32
   return(true);
 #else
+  char ifname[32];
   struct ifreq ifr;
-  char *colon;
   int sock;
 
   sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
@@ -3282,10 +3437,7 @@ bool Utils::isInterfaceUp(char *ifname) {
   if(sock == -1)
     return(false);
 
-  /* Handle PF_RING interfaces zc:ens2f1@3 */
-  colon = strchr(ifname, ':');
-  if(colon != NULL) /* removing pf_ring module prefix (e.g. zc:ethX) */
-    ifname = colon+1;
+  ifname2devname(_ifname, ifname, sizeof(ifname));
 
   memset(&ifr, 0, sizeof(ifr));
   strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
@@ -3330,7 +3482,8 @@ bool Utils::getCPULoad(cpu_load_stats *out) {
   FILE *fp;
 
   if((fp = fopen("/proc/loadavg", "r"))) {
-    fscanf(fp,"%f", &load);
+    if(fscanf(fp, "%f", &load) != 1)
+      load = 0;
     fclose(fp);
 
     out->load = load;
@@ -3824,6 +3977,36 @@ void Utils::listInterfaces(lua_State* vm) {
     Utils::ntop_freealldevs(devpointer);
   }
 }
+
+/* ****************************************************** */
+
+char *Utils::ntop_lookupdev(char *ifname_out, int ifname_size) {
+  char ebuf[PCAP_ERRBUF_SIZE];
+  pcap_if_t *pdevs, *pdev;
+  bool found = false;
+
+  ifname_out[0] = '\0';
+
+  if (pcap_findalldevs(&pdevs, ebuf) != 0) 
+    goto err;
+
+  pdev = pdevs;
+  while (pdev != NULL) {
+    if(Utils::validInterface(pdev) && 
+       Utils::isInterfaceUp(pdev->name)) {
+      snprintf(ifname_out, ifname_size, "%s", pdev->name);
+      found = true;
+      break;
+    }
+    pdev = pdev->next;
+  }
+
+  pcap_freealldevs(pdevs);
+
+ err:
+  return found ? ifname_out : NULL;
+}
+
 
 /* ****************************************************** */
 
@@ -4389,7 +4572,10 @@ void Utils::deferredExec(const char * const command) {
 
   printf("%s\n", command_buf);
   fflush(stdout);
-  system(command_buf);
+
+  if(system(command_buf) == -1)
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "Failed command %s: %d/%s",
+				 command_buf, errno, strerror(errno));
 }
 #endif
 
@@ -4541,3 +4727,58 @@ bool Utils::isPingSupported() {
 
     return(false);
 }
+
+/* ****************************************************** */
+
+/*
+ * Return the linux device name given an interface name
+ * to handle PF_RING interfaces like zc:ens2f1@3
+ * (it removes '<module>:' prefix or trailing '@<queue>')
+ */
+char *Utils::ifname2devname(const char *ifname, char *devname, int devname_size) {
+  const char *colon;
+  char *at;
+
+  /* strip prefix ":" */
+  colon = strchr(ifname, ':');
+  strncpy(devname, colon != NULL ? colon+1 : ifname, devname_size);
+  devname[devname_size-1] = '\0';
+
+  /* strip trailing "@" */
+  at = strchr(devname, '@');
+  if (at != NULL)
+    at[0] = '\0';
+
+  return devname;
+}
+
+/* ****************************************************** */
+
+ScoreCategory Utils::mapScriptToScoreCategory(ScriptCategory script_category) {
+  if(script_category == script_category_security)
+    return(score_category_security);
+  else
+    return(score_category_network);
+}
+
+/* ****************************************************** */
+
+AlertLevelGroup Utils::mapAlertLevelToGroup(AlertLevel alert_level) {
+  switch(alert_level) {
+  case alert_level_debug:
+  case alert_level_info:
+  case alert_level_notice:
+    return alert_level_group_notice_or_lower;
+  case alert_level_warning:
+    return alert_level_group_warning;
+  case alert_level_error:
+  case alert_level_critical:
+  case alert_level_alert:
+  case alert_level_emergency:
+    return alert_level_group_error_or_higher;
+  default:
+    return alert_level_group_none;
+  }
+}
+
+/* ****************************************************** */

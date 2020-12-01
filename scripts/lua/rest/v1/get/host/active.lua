@@ -13,14 +13,12 @@ local rest_utils = require("rest_utils")
 
 --
 -- Read list of active hosts
--- Example: curl -u admin:admin -d '{"ifid": "1"}' http://localhost:3000/lua/rest/v1/get/host/active.lua
+-- Example: curl -u admin:admin -H "Content-Type: application/json" -d '{"ifid": "1"}' http://localhost:3000/lua/rest/v1/get/host/active.lua
 --
 -- NOTE: in case of invalid login, no error is returned but redirected to login
 --
 
-sendHTTPContentTypeHeader('application/json')
-
-local rc = rest_utils.consts_ok
+local rc = rest_utils.consts.success.ok
 local res = {}
 
 local ifid = _GET["ifid"]
@@ -48,8 +46,8 @@ local mac          = _GET["mac"]
 local top_hidden   = ternary(_GET["top_hidden"] == "1", true, nil)
 
 if isEmptyString(ifid) then
-   rc = rest_utils.consts_invalid_interface
-   print(rest_utils.rc(rc))
+   rc = rest_utils.consts.err.invalid_interface
+   rest_utils.answer(rc)
    return
 end
 
@@ -122,14 +120,14 @@ local hosts_stats = hosts_retrv_function(false, sortColumn, perPage, to_skip, sO
                           filtered_hosts, blacklisted_hosts, top_hidden, anomalous, dhcp_hosts, cidr)
 
 if hosts_stats == nil then
-   print(rest_utils.rc(rest_utils.consts_not_found))
+   rest_utils.answer(rest_utils.consts.err.not_found)
    return
 end
 
 hosts_stats = hosts_stats["hosts"]
 
 if hosts_stats == nil then
-   print(rest_utils.rc(rest_utils.consts_internal_error))
+   rest_utils.answer(rest_utils.consts.err.internal_error)
    return
 end
 
@@ -269,4 +267,4 @@ res = {
    },
 }
 
-print(rest_utils.rc(rc, res))
+rest_utils.answer(rc, res)

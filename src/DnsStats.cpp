@@ -86,7 +86,7 @@ void DnsStats::luaStats(lua_State *vm, struct dns_stats *stats, const char *labe
 
 /* *************************************** */
 
-void DnsStats::lua(lua_State *vm, bool verbose ) {
+void DnsStats::lua(lua_State *vm, bool verbose) {
   lua_newtable(vm);
 
   luaStats(vm, &sent_stats, "sent", verbose);

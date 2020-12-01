@@ -185,6 +185,10 @@ end
 
 -- format an epoch
 function format_utils.formatEpoch(epoch)
+  if epoch == nil then
+    epoch = os.time()
+  end
+
   if epoch == 0 then
     return("")
   else
@@ -257,6 +261,84 @@ function format_utils.formatContainerFromId(cont_id)
    else
       return shortenString(cont_id, 12)
    end
+end
+
+-- @brief Formatter function for two flow statuses. Places here to ease reuse.
+--        Current flow statuses sharing this function are status_tcp_severe_connection_issues
+--        and status_tcp_connection_issues
+function format_utils.formatConnectionIssues(info)
+   local res = i18n("flow_details.tcp_connection_issues")
+
+   if info and info.client_issues and info.tcp_stats and type(info.tcp_stats) == "table" and info.cli2srv_pkts then
+      local retx = info.tcp_stats["cli2srv.retransmissions"]
+      local ooo =  info.tcp_stats["cli2srv.out_of_order"]
+      local lost = info.tcp_stats["cli2srv.lost"]
+
+      local what = {}
+
+      if retx > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.x_retx", {retx = format_utils.formatValue(retx)})
+      end
+      if ooo > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.x_ooo", {ooo = format_utils.formatValue(ooo)})
+      end
+      if lost > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.x_lost", {lost = format_utils.formatValue(lost)})
+      end
+
+      if info.cli2srv_pkts > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.out_of_x_total_packets", {tot = format_utils.formatValue(info.cli2srv_pkts)})
+      end
+
+      if #what > 0 then
+	 res = res.." "..string.format("[%s: %s]", i18n("client_to_server"), table.concat(what, ", "))
+      end
+   end
+
+   if info and info.server_issues and info.tcp_stats and type(info.tcp_stats) == "table" and info.srv2cli_pkts then
+      local retx = info.tcp_stats["srv2cli.retransmissions"]
+      local ooo =  info.tcp_stats["srv2cli.out_of_order"]
+      local lost = info.tcp_stats["srv2cli.lost"]
+
+      local what = {}
+
+      if retx > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.x_retx", {retx = format_utils.formatValue(retx)})
+      end
+      if ooo > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.x_ooo", {ooo = format_utils.formatValue(ooo)})
+      end
+      if lost > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.x_lost", {lost = format_utils.formatValue(lost)})
+      end
+      if info.srv2cli_pkts > 0 then
+	 what[#what + 1] = i18n("alerts_dashboard.out_of_x_total_packets", {tot = format_utils.formatValue(info.srv2cli_pkts)})
+      end
+
+      if #what > 0 then
+	 res = res.." "..string.format("[%s: %s]", i18n("server_to_client"), table.concat(what, ", "))
+      end
+   end
+
+   return res
+end
+
+function format_utils.formatAddressCategory(host)
+   local addr_category = ""
+
+   if host ~= nil then 
+      if host["is_blacklisted"] then
+         addr_category = addr_category .. " <i class=\'fas fa-ban fa-sm\' title=\'"..i18n("hosts_stats.blacklisted").."\'></i>"
+      end
+
+      if(host["localhost"] == true) then
+         addr_category = addr_category .. ' <span class="badge badge-success">'..i18n("details.label_local_host")..'</span>'
+      else 
+         addr_category = addr_category .. ' <span class="badge badge-secondary">'..i18n("details.label_remote")..'</span>'
+      end
+   end
+
+   return addr_category
 end
 
 return format_utils

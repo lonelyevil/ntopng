@@ -33,8 +33,10 @@ else
 end
 
 local base_url = ntop.getHttpPrefix() .. "/lua/admin/edit_category_lists.lua"
+local enabled_status = _GET["enabled_status"] or "enabled"
 local page_params = {
   category = _GET["category"],
+  enabled_status = enabled_status,
   currentPage = currentPage,
 }
 
@@ -79,12 +81,12 @@ print[[
       <!-- Modal content-->
       <div class="modal-content">
         <div class="modal-header">
-          <h3 class="modal-title">]] print(i18n("category_lists.edit_list")) print[[</h3>
+          <h5 class="modal-title">]] print(i18n("category_lists.edit_list")) print[[</h5>
           <button type="button" class="close" data-dismiss="modal">&times;</button>
         </div>
+        <form id="edit-list-form" method="post" data-toggle="validator">
         <div class="modal-body">
           <div class="container-fluid">
-            <form id="edit-list-form" method="post" data-toggle="validator">
               <input type="hidden" name="csrf" value="]] print(ntop.getRandomCSRFValue()) print[[" />
               <input type="hidden" name="currentPage" value="]] print(currentPage) print  [[" />
               <input type="hidden" name="action" value="edit" />
@@ -132,29 +134,47 @@ print[[
                   </select>
                 </div>
               </div>
-
-              <br>
-              <div class="form-group">
+            </div>
+            </div>
+            <div class='modal-footer'>
+            <div class="form-group">
                 <button type="submit" class="btn btn-primary btn-block">]] print(i18n("category_lists.edit_list")) print[[</button>
               </div>
             </div>
           </form>
-        </div>
       </div>
     </div>
   </div>
 ]]
 
 page_utils.print_page_title(i18n("category_lists.category_lists"))
-
 print[[
-<div id="table-edit-lists-form"></div>]]
+<div class='card'>
+  <div class="card-header">
+    <ul class="nav nav-tabs card-header-tabs">
+      <li class="nav-item">
+        <a class="nav-link ]] print(ternary(enabled_status == "all", "active", "")) print[[" href="]] print(ntop.getHttpPrefix()) print[[/lua/admin/edit_category_lists.lua?enabled_status=all">]] print(i18n("all")) print[[</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link ]] print(ternary(enabled_status == "enabled", "active", "")) print[[" href="]] print(ntop.getHttpPrefix()) print[[/lua/admin/edit_category_lists.lua?enabled_status=enabled">]] print(i18n("enabled")) print[[</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link ]] print(ternary(enabled_status == "disabled", "active", "")) print[[" href="]] print(ntop.getHttpPrefix()) print[[/lua/admin/edit_category_lists.lua?enabled_status=disabled">]] print(i18n("disabled")) print[[</a>
+      </li>
+    </ul>
+  </div>
+<div class='card-body'>
+
+<div id="table-edit-lists-form"></div>
+</div>
+]]
 
 local stats = ntop.getCache("ntopng.cache.category_lists.load_stats")
 if(stats) then
   stats = json.decode(stats)
 
   if(stats) then
+    print([[<div class='card-footer'>]])
     print(i18n("category_lists.loading_stats", {
       when = format_utils.formatPastEpochShort(stats.begin),
       num_hosts = stats.num_hosts,
@@ -162,8 +182,15 @@ if(stats) then
       num_ja3 = stats.num_ja3,
       duration = secondsToTime(stats.duration),
     }))
+    print([[</div>]])
   end
 end
+
+print[[
+</div>
+]]
+
+
 
 print[[
 <script>
@@ -247,10 +274,9 @@ print[[],
       var enabled = data.column_enabled;
       var actions_td_idx = 8;
 
-      datatableAddActionButtonCallback.bind(row)(actions_td_idx, "prepareEditListModal('" + list_name + "'); $('#editListModal').modal('show');", "]] print(i18n('users.edit')) print[[");
+      datatableAddActionButtonCallback.bind(row)(actions_td_idx, "prepareEditListModal('" + list_name + "'); $('#editListModal').modal('show');", "<i class='fas fa-edit'></i>");
 
-      if(enabled)
-        datatableAddActionButtonCallback.bind(row)(actions_td_idx, "$('#list_to_update').val('" + list_name + "'); $('#list-update-form').submit()", "]] print(i18n('category_lists.update_now')) print[[");
+      datatableAddActionButtonCallback.bind(row)(actions_td_idx, "$('#list_to_update').val('" + list_name + "'); $('#list-update-form').submit()", "<i class='fas fa-sync-alt'></i>", enabled);
 
       return row;
      }, tableCallback: function() {
@@ -274,7 +300,6 @@ print[[],
   }
 </script>
 
-<br><br>
 ]]
 
 dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")

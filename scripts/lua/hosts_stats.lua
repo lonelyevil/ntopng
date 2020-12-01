@@ -110,7 +110,7 @@ if(protocol_name == nil) then protocol_name = protocol end
 local traffic_type_title
 if not isEmptyString(traffic_type) then
    page_params["traffic_type"] = traffic_type
-   
+
    if traffic_type == "one_way" then
       traffic_type_title = i18n("hosts_stats.traffic_type_one_way")
    elseif traffic_type == "bidirectional" then
@@ -166,13 +166,13 @@ if(pool ~= nil) then
    local pool_link
    local title
 
-   if(pool ~= host_pools_instance.DEFAULT_POOL_ID) or (have_nedge) then
+   if(tonumber(pool) ~= host_pools_instance.DEFAULT_POOL_ID) or (have_nedge) then
       if have_nedge then
 	 pool_link = "/lua/pro/nedge/admin/nf_edit_user.lua?username=" ..
 	 ternary(pool == host_pools_nedge.DEFAULT_POOL_ID, "", host_pools_nedge.poolIdToUsername(pool))
 	 title = i18n("nedge.edit_user")
       else
-	 pool_link = "/lua/if_stats.lua?page=pools&pool="..pool
+	 pool_link = "/lua/admin/manage_host_members.lua?pool="..pool
 	 title = i18n("host_pools.manage_pools")
       end
 
@@ -191,8 +191,7 @@ page_utils.print_page_title(getPageTitle(protocol_name, traffic_type_title, netw
 if (_GET["page"] ~= "historical") then
    if(asn ~= nil) then
       print [[
-<div class="container-fluid">
-  <ul class="nav nav-tabs">
+  <ul class="nav nav-tabs card-header-tabs">
     <li class="nav-item" class="active"><a class="nav-link active" data-toggle="tab" href="#home">]] print(i18n("hosts_stats.hosts")) print[[</a></li>
 ]]
 
@@ -207,10 +206,11 @@ if (_GET["page"] ~= "historical") then
       end
    end
 
-   print("</ul>")
+   print("</ul>") -- close .card-header
 
    if(asn ~= nil) then
       print [[
+   <div class='card-body'>
   <div class="tab-content">
 <div id="home" class="tab-pane in active">
 ]]
@@ -264,7 +264,9 @@ if (_GET["page"] ~= "historical") then
    local custom_name, custom_key, custom_align = custom_column_utils.getCustomColumnName()
 
    print [[
-      <div id="table-hosts"></div>
+      <div class='table-responsive'>
+         <div id="table-hosts"></div>
+      </div>
 	 <script>
 	 var url_update = "]] print(getPageUrl(ntop.getHttpPrefix() .. "/lua/get_hosts_data.lua", page_params)) print[[";]]
 
@@ -552,11 +554,11 @@ if (_GET["page"] ~= "historical") then
         var data = jQuery.parseJSON(content);
         if (data.status == "BLOCKED") {
           $('#'+host_key+'_info').find('.block-badge')
-            .removeClass('badge-secondary').addClass('badge-danger');
+            .removeClass('btn-secondary').addClass('btn-danger');
           $('#'+host_key+'_ip').find('a').css("text-decoration", "line-through");
         } else if (data.status == "UNBLOCKED") {
           $('#'+host_key+'_info').find('.block-badge')
-            .removeClass('badge-danger').addClass('badge-secondary');
+            .removeClass('btn-danger').addClass('btn-secondary');
           $('#'+host_key+'_ip').find('a').css("text-decoration", "none");
         }
       },
@@ -574,6 +576,7 @@ if (_GET["page"] ~= "historical") then
       print [[
 </div>
 
+
 <script src="/js/ripe_widget_api.js"></script>
 
 <div id="asinfo" class="tab-pane"></div>
@@ -582,7 +585,6 @@ if (_GET["page"] ~= "historical") then
 <div id="prefix" class="tab-pane"></div>
 <div id="bgp" class="tab-pane"></div>
 
-</div>
 
 <script>
    $(document).ready(function() {

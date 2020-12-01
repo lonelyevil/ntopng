@@ -24,7 +24,7 @@
 /* *************************************** */
 
 LocalHostStats::LocalHostStats(Host *_host) : HostStats(_host) {
-  top_sites = new FrequentStringItems(HOST_SITES_TOP_NUMBER);
+  top_sites = new (std::nothrow) FrequentStringItems(HOST_SITES_TOP_NUMBER);
   old_sites = strdup("{}");
   dns  = new (std::nothrow) DnsStats();
   http = new (std::nothrow) HTTPstats(_host);
@@ -44,7 +44,7 @@ LocalHostStats::LocalHostStats(Host *_host) : HostStats(_host) {
 /* *************************************** */
 
 LocalHostStats::LocalHostStats(LocalHostStats &s) : HostStats(s) {
-  top_sites = new FrequentStringItems(HOST_SITES_TOP_NUMBER);
+  top_sites = new (std::nothrow) FrequentStringItems(HOST_SITES_TOP_NUMBER);
   old_sites = strdup("{}");
   dns = s.getDNSstats() ? new (std::nothrow) DnsStats(*s.getDNSstats()) : NULL;
   http = NULL;
@@ -151,7 +151,6 @@ void LocalHostStats::lua(lua_State* vm, bool mask_host, DetailsLevel details_lev
     luaDNS(vm, true);
     luaHTTP(vm);
     
-
     /* Contacts */
     lua_newtable(vm);
       
@@ -211,8 +210,8 @@ void LocalHostStats::deserialize(json_object *o) {
 
   if(json_object_object_get_ex(o, "flows.as_client", &obj))  total_num_flows_as_client = json_object_get_int(obj);
   if(json_object_object_get_ex(o, "flows.as_server", &obj))  total_num_flows_as_server = json_object_get_int(obj);
-  if(json_object_object_get_ex(o, "misbehaving_flows.as_client", &obj))  misbehaving_flows_as_client = json_object_get_int(obj);
-  if(json_object_object_get_ex(o, "misbehaving_flows.as_server", &obj))  misbehaving_flows_as_server = json_object_get_int(obj);
+  if(json_object_object_get_ex(o, "alerted_flows.as_client", &obj))  alerted_flows_as_client = json_object_get_int(obj);
+  if(json_object_object_get_ex(o, "alerted_flows.as_server", &obj))  alerted_flows_as_server = json_object_get_int(obj);
   if(json_object_object_get_ex(o, "unreachable_flows.as_client", &obj))  unreachable_flows_as_client = json_object_get_int(obj);
   if(json_object_object_get_ex(o, "unreachable_flows.as_server", &obj))  unreachable_flows_as_server = json_object_get_int(obj);
   if(json_object_object_get_ex(o, "host_unreachable_flows.as_client", &obj))  host_unreachable_flows_as_client = json_object_get_int(obj);
@@ -222,18 +221,6 @@ void LocalHostStats::deserialize(json_object *o) {
   /* Restores possibly checkpointed data */
   checkpoints.sent_bytes = getNumBytesSent();
   checkpoints.rcvd_bytes = getNumBytesRcvd();
-}
-
-/* *************************************** */
-
-void LocalHostStats::incNumFlows(bool as_client, Host *peer) {
-  HostStats::incNumFlows(as_client, peer);
-}
-
-/* *************************************** */
-
-void LocalHostStats::decNumFlows(bool as_client, Host *peer) {
-  HostStats::decNumFlows(as_client, peer);
 }
 
 /* *************************************** */

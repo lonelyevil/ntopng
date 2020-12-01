@@ -20,6 +20,9 @@ require "lua_utils"
 local plugins_utils = require "plugins_utils"
 plugins_utils.loadPlugins()
 
+local recipients = require "recipients"
+recipients.initialize()
+
 local alert_utils = require "alert_utils"
 
 local discover_utils = require "discover_utils"
@@ -32,7 +35,30 @@ local ts_utils = require "ts_utils"
 local user_scripts = require("user_scripts")
 local presets_utils = require "presets_utils"
 local prefs = ntop.getPrefs()
-local blog_utils = require("blog_utils")
+local endpoints = require("endpoints")
+
+-- ##################################################################
+
+traceError(TRACE_NORMAL, TRACE_CONSOLE, "Processing startup.lua: please hold on...")
+
+-- ##################################################################
+
+if ntop.isAppliance() then
+   package.path = dirs.installdir .. "/scripts/lua/modules/system_config/?.lua;" .. package.path
+
+   -- Discard any pending, unfinished, unsaved configuration
+   local appliance_config = require("appliance_config"):create(true):discard()
+
+   -- Load the actual valid configuration
+   appliance_config = require("appliance_config"):create(false)
+
+   -- Apply some config prefs
+   local vlan_trunk = appliance_config:isBridgeOverVLANTrunkEnabled()
+   ntop.setPref("ntopng.prefs.enable_vlan_trunk_bridge", ternary(vlan_trunk, "1", "0"))
+
+   -- Load possibly changed prefs
+   ntop.reloadPreferences()
+end
 
 host_pools_nedge.migrateHostPools()
 if ntop.isnEdge() then
@@ -44,7 +70,7 @@ if(ntop.isPro()) then
    shaper_utils.initShapers()
 end
 
-traceError(TRACE_NORMAL, TRACE_CONSOLE, "Processing startup.lua: please hold on...")
+-- ##################################################################
 
 -- Load the default user scripts configuration
 user_scripts.loadDefaultConfig()
@@ -136,12 +162,7 @@ companion_interface_utils.initCompanions()
 
 -- ##################################################################
 
-lists_utils.clearErrors()
-lists_utils.downloadLists()
-lists_utils.reloadLists()
--- Need to do the actual reload also here as otherwise some
--- flows may be misdetected until housekeeping.lua is executed
-lists_utils.checkReloadLists()
+lists_utils.startup()
 
 -- ##################################################################
 
@@ -159,7 +180,6 @@ if  ntop.isnEdge() then
    http_bridge_conf_utils.configureBridge()
 end
 
-alert_utils.processAlertNotifications(os.time(), 0, true --[[ force ]])
 alert_utils.notify_ntopng_start()
 
 if not recovery_utils.check_clean_shutdown() then
@@ -209,8 +229,6 @@ end
 -- Show the warning at most 1 time per run
 ntop.delCache("ntopng.cache.rrd_format_change_warning_shown")
 
-blog_utils.fetchLatestPosts()
-
 -- Check if there is a local file to run
 local local_startup_file = "/usr/share/ntopng/local/scripts/callbacks/system/startup.lua"
 if(ntop.exists(local_startup_file)) then
@@ -218,4 +236,4 @@ if(ntop.exists(local_startup_file)) then
    dofile(local_startup_file)
 end
 
-traceError(TRACE_NORMAL, TRACE_CONSOLE, "Startup completed")
+traceError(TRACE_NORMAL, TRACE_CONSOLE, "Startup completed: ntopng is now operational")

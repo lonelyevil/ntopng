@@ -74,8 +74,6 @@ Host::~Host() {
 
   freeHostNames();
 
-  if(flow_alert_counter) delete flow_alert_counter;
-
   if(syn_flood_attacker_alert)  delete syn_flood_attacker_alert;
   if(syn_flood_victim_alert)    delete syn_flood_victim_alert;
   if(flow_flood_attacker_alert) delete flow_flood_attacker_alert;
@@ -141,7 +139,8 @@ void Host::initialize(Mac *_mac, u_int16_t _vlanId, bool init_all) {
   data_delete_requested = false, stats_reset_requested = false, name_reset_requested = false;
   last_stats_reset = ntop->getLastStatsReset(); /* assume fresh stats, may be changed by deserialize */
   os = os_unknown;
-  prefs_loaded = is_dhcp_server = false;
+  prefs_loaded = false;
+  host_services_bitmap = 0;
   mud_pref = mud_recording_default;
 
   // readStats(); - Commented as if put here it's too early and the key is not yet set
@@ -158,10 +157,9 @@ void Host::initialize(Mac *_mac, u_int16_t _vlanId, bool init_all) {
     vlan->incUses();
 
   num_resolve_attempts = 0, ssdpLocation = NULL;
-  num_active_flows_as_client.reset(), num_active_flows_as_server.reset();
+  num_active_flows_as_client = num_active_flows_as_server = 0;
   active_alerted_flows = 0;
 
-  flow_alert_counter = NULL;
   nextResolveAttempt = 0;
   vlan_id = _vlanId % MAX_NUM_VLAN,
   memset(&names, 0, sizeof(names));
@@ -172,10 +170,10 @@ void Host::initialize(Mac *_mac, u_int16_t _vlanId, bool init_all) {
   is_in_broadcast_domain = false;
 
   PROFILING_SUB_SECTION_ENTER(iface, "Host::initialize: new AlertCounter", 17);
-  syn_flood_attacker_alert  = new AlertCounter();
-  syn_flood_victim_alert    = new AlertCounter();
-  flow_flood_attacker_alert = new AlertCounter();
-  flow_flood_victim_alert = new AlertCounter();
+  syn_flood_attacker_alert  = new (std::nothrow) AlertCounter();
+  syn_flood_victim_alert    = new (std::nothrow) AlertCounter();
+  flow_flood_attacker_alert = new (std::nothrow) AlertCounter();
+  flow_flood_victim_alert   = new (std::nothrow) AlertCounter();
   syn_sent_last_min = synack_recvd_last_min = 0;
   syn_recvd_last_min = synack_sent_last_min = 0;
   PROFILING_SUB_SECTION_EXIT(iface, 17);
@@ -278,9 +276,7 @@ void Host::set_mac(Mac *_mac) {
 bool Host::hasAnomalies() const {
   time_t now = time(0);
 
-  return num_active_flows_as_client.is_misbehaving(now)
-    || num_active_flows_as_server.is_misbehaving(now)
-    || stats->hasAnomalies(now);
+  return stats->hasAnomalies(now);
 }
 
 /* *************************************** */
@@ -292,11 +288,6 @@ void Host::lua_get_anomalies(lua_State* vm) const {
   if(hasAnomalies()) {
     time_t now = time(0);
     lua_newtable(vm);
-
-    if(num_active_flows_as_client.is_misbehaving(now))
-      num_active_flows_as_client.lua(vm, "num_active_flows_as_client");
-    if(num_active_flows_as_server.is_misbehaving(now))
-      num_active_flows_as_server.lua(vm, "num_active_flows_as_server");
 
     stats->luaAnomalies(vm, now);
 
@@ -391,7 +382,7 @@ void Host::lua_get_app_bytes(lua_State *vm, u_int app_id) const {
 /* ***************************************************** */
 
 void Host::lua_get_cat_bytes(lua_State *vm, ndpi_protocol_category_t category_id) const {
-  lua_push_uint64_table_entry(vm, "bytes", get_ndpi_stats()->getCategoryBytes(category_id));
+  lua_pushinteger(vm, get_ndpi_stats()->getCategoryBytes(category_id));
 }
 
 /* ***************************************************** */
@@ -418,8 +409,17 @@ void Host::lua_get_host_pool(lua_State *vm) const {
 
 /* ***************************************************** */
 
-void Host::lua_get_score(lua_State *vm) const {
-  lua_push_int32_table_entry(vm, "score", score.getValue());
+void Host::lua_get_score(lua_State *vm) {
+  lua_push_uint64_table_entry(vm, "score", score.get());
+  lua_push_uint64_table_entry(vm, "score.as_client", score.getClient());
+  lua_push_uint64_table_entry(vm, "score.as_server", score.getServer());
+  lua_push_uint64_table_entry(vm, "score.total",     score.get());
+}
+
+/* ***************************************************** */
+
+void Host::lua_get_score_breakdown(lua_State *vm) {
+  score.lua_breakdown(vm);
 }
 
 /* ***************************************************** */
@@ -435,20 +435,16 @@ void Host::lua_get_os(lua_State *vm) {
 
 void Host::lua_get_min_info(lua_State *vm) const {
   lua_push_bool_table_entry(vm, "localhost", isLocalHost());
-  lua_push_bool_table_entry(vm, "privatehost", isPrivateHost());
   lua_push_bool_table_entry(vm, "systemhost", isSystemHost());
-  lua_push_bool_table_entry(vm, "broadcast_domain_host", isBroadcastDomainHost());
-  lua_push_bool_table_entry(vm, "dhcpHost", isDhcpHost());
   lua_push_bool_table_entry(vm, "is_blacklisted", isBlacklisted());
-  lua_push_bool_table_entry(vm, "is_broadcast", ip.isBroadcastAddress());
-  lua_push_bool_table_entry(vm, "is_multicast", ip.isMulticastAddress());
+  lua_push_int32_table_entry(vm, "host_services_bitmap", host_services_bitmap);
+  
+#ifdef HAVE_NEDGE
   lua_push_bool_table_entry(vm, "childSafe", isChildSafe());
-#ifdef NTOPNG_PRO
   lua_push_bool_table_entry(vm, "has_blocking_quota", has_blocking_quota);
   lua_push_bool_table_entry(vm, "has_blocking_shaper", has_blocking_shaper);
-#endif
-
   lua_push_bool_table_entry(vm, "drop_all_host_traffic", dropAllTraffic());
+#endif
 }
 
 /* ***************************************************** */
@@ -490,6 +486,23 @@ void Host::lua_get_flow_flood(lua_State *vm) const {
 
 /* ***************************************************** */
 
+void Host::lua_get_services(lua_State *vm) const {
+  if(host_services_bitmap == 0) return;
+
+  lua_newtable(vm);
+
+  if(isDhcpServer()) lua_push_bool_table_entry(vm, "dhcp", true);
+  if(isDnsServer()) lua_push_bool_table_entry(vm,  "dns",  true);
+  if(isSmtpServer()) lua_push_bool_table_entry(vm, "smtp", true);
+  if(isNtpServer()) lua_push_bool_table_entry(vm,  "ntp",  true);
+  
+  lua_pushstring(vm, "services");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+}
+
+/* ***************************************************** */
+
 void Host::lua_get_syn_scan(lua_State *vm) const {
   u_int32_t hits;
 
@@ -519,15 +532,15 @@ void Host::lua_get_time(lua_State* vm) const {
 
 void Host::lua_get_num_alerts(lua_State* vm) const {
   lua_newtable(vm);
-  lua_push_uint64_table_entry(vm, "min", getNumTriggeredAlerts(minute_script));
-  lua_push_uint64_table_entry(vm, "5mins", getNumTriggeredAlerts(five_minute_script));
-  lua_push_uint64_table_entry(vm, "hour", getNumTriggeredAlerts(hour_script));
-  lua_push_uint64_table_entry(vm, "day", getNumTriggeredAlerts(day_script));
+  lua_push_uint64_table_entry(vm, "min", getNumEngagedAlerts(minute_script));
+  lua_push_uint64_table_entry(vm, "5mins", getNumEngagedAlerts(five_minute_script));
+  lua_push_uint64_table_entry(vm, "hour", getNumEngagedAlerts(hour_script));
+  lua_push_uint64_table_entry(vm, "day", getNumEngagedAlerts(day_script));
   lua_pushstring(vm, "num_triggered_alerts");
   lua_insert(vm, -2);
   lua_settable(vm, -3);
 
-  lua_push_uint64_table_entry(vm, "num_alerts", getNumTriggeredAlerts());
+  lua_push_uint64_table_entry(vm, "num_alerts", getNumEngagedAlerts());
   lua_push_uint64_table_entry(vm, "active_alerted_flows", getNumAlertedFlows());
   lua_push_uint64_table_entry(vm, "total_alerts", stats->getTotalAlerts());
 }
@@ -544,10 +557,8 @@ void Host::lua_get_num_total_flows(lua_State* vm) const {
 void Host::lua_get_num_flows(lua_State* vm) const {
   lua_push_uint64_table_entry(vm, "active_flows.as_client", getNumOutgoingFlows());
   lua_push_uint64_table_entry(vm, "active_flows.as_server", getNumIncomingFlows());
-  lua_push_uint64_table_entry(vm, "misbehaving_flows.as_server", getTotalNumMisbehavingIncomingFlows());
-  lua_push_uint64_table_entry(vm, "misbehaving_flows.as_client", getTotalNumMisbehavingOutgoingFlows());
-  lua_push_uint64_table_entry(vm, "misbehaving_flows_status_map.as_server", getMisbehavingIncomingFlowsStatusMap().get());
-  lua_push_uint64_table_entry(vm, "misbehaving_flows_status_map.as_client", getMisbehavingOutgoingFlowsStatusMap().get());
+  lua_push_uint64_table_entry(vm, "alerted_flows.as_server", getTotalNumAlertedIncomingFlows());
+  lua_push_uint64_table_entry(vm, "alerted_flows.as_client", getTotalNumAlertedOutgoingFlows());
   lua_push_uint64_table_entry(vm, "unreachable_flows.as_server", getTotalNumUnreachableIncomingFlows());
   lua_push_uint64_table_entry(vm, "unreachable_flows.as_client", getTotalNumUnreachableOutgoingFlows());
   lua_push_uint64_table_entry(vm, "host_unreachable_flows.as_server", getTotalNumHostUnreachableIncomingFlows());
@@ -556,14 +567,14 @@ void Host::lua_get_num_flows(lua_State* vm) const {
 
 /* ***************************************************** */
 
-void Host::lua_get_num_contacts(lua_State* vm) const {
+void Host::lua_get_num_contacts(lua_State* vm) {
   lua_push_uint64_table_entry(vm, "contacts.as_client", getNumActiveContactsAsClient());
   lua_push_uint64_table_entry(vm, "contacts.as_server", getNumActiveContactsAsServer());
 }
 
 /* ***************************************************** */
 
-void Host::lua_get_num_http_hosts(lua_State* vm) const {
+void Host::lua_get_num_http_hosts(lua_State* vm) {
   lua_push_uint64_table_entry(vm, "active_http_hosts", getActiveHTTPHosts());
 }
 
@@ -619,6 +630,8 @@ void Host::lua(lua_State* vm, AddressTree *ptree,
   luaICMP(vm, get_ip()->isIPv4(), false);
 
   if(host_details) {
+    lua_get_score_breakdown(vm);
+
     /*
       This has been disabled as in case of an attack, most hosts do not have a name and we will waste
       a lot of time doing activities that are not necessary
@@ -644,8 +657,7 @@ void Host::lua(lua_State* vm, AddressTree *ptree,
     lua_get_syn_flood(vm);
     lua_get_flow_flood(vm);
     lua_get_syn_scan(vm);
-
-    lua_push_bool_table_entry(vm, "dhcp_server", is_dhcp_server);
+    lua_get_services(vm);
   }
 
   lua_get_time(vm);
@@ -820,8 +832,32 @@ const char * Host::getOSDetail(char * const buf, ssize_t buf_len) {
 /* ***************************************** */
 
 bool Host::is_hash_entry_state_idle_transition_ready() const {
+  u_int32_t max_idle;
+
+  /*
+    Idle transition should only be allowed if host has NO alerts engaged.
+    This is to always keep in-memory hosts with ongoing issues.
+
+    - For hosts that actively generate traffic, this is achieved automatically (active hosts
+      stay in memory).
+    - For hosts that stop generating traffic, this is NOT achieved automatically (inactive hosts
+      become candidates for purging).
+
+    However, it is not desirable to keep inactive hosts in memory for an unlimited amount of time,
+    even if they have ongoing inssues, as this could cause OOMs or make ntopng vulnerable to certain attacks.
+
+    For this reason, when an host has ongoing issues, a different (larger) maximum idleness is used to:
+    - Keep it in memory for a longer time
+    - Avoid keeping inactive hosts in memory for an indefinite time
+  */
+
+  if(getNumEngagedAlerts() > 0)
+    max_idle = ntop->getPrefs()->get_alerted_host_max_idle();
+  else
+    max_idle = ntop->getPrefs()->get_host_max_idle(isLocalHost());
+
   bool res = (getUses() == 0)
-    && is_active_entry_now_idle(ntop->getPrefs()->get_host_max_idle(isLocalHost()));
+    && is_active_entry_now_idle(max_idle);
 
 #if DEBUG_HOST_IDLE_TRANSITION
   char buf[64];
@@ -830,20 +866,6 @@ bool Host::is_hash_entry_state_idle_transition_ready() const {
 #endif
 
   return res;
-};
-
-/* ***************************************** */
-
-void Host::periodic_hash_entry_state_update(void *user_data) {
-  char buf[64];
-
-  if(get_state() == hash_entry_state_idle) {
-    if(getUses() > 0 && !ntop->getGlobals()->isShutdownRequested())
-      /* During shutdown it is acceptable to have a getUses() > 0 as all the hosts are forced as idle */
-      ntop->getTrace()->traceEvent(TRACE_WARNING, "Internal error: num_uses=%u [%s]", getUses(), get_ip()->print(buf, sizeof(buf)));
-  }
-
-  GenericHashEntry::periodic_hash_entry_state_update(user_data);
 };
 
 /* *************************************** */
@@ -861,22 +883,7 @@ void Host::periodic_stats_update(const struct timeval *tv) {
   if((os == os_unknown) && cur_mac && cur_mac->getFingerprint())
     os = Utils::getOSFromFingerprint(cur_mac->getFingerprint(), cur_mac->get_manufacturer(), cur_mac->getDeviceType());
 
-  num_active_flows_as_client.computeAnomalyIndex(tv->tv_sec),
-    num_active_flows_as_server.computeAnomalyIndex(tv->tv_sec);
-
   stats->updateStats(tv);
-
-#ifdef MONITOREDGAUGE_DEBUG
-  char buf[64], buf2[128];
-
-  if(num_active_flows_as_client.is_misbehaving(tv->tv_sec))
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[num_active_flows_as_client] %s %s",
-				 ip.print(buf, sizeof(buf)), num_active_flows_as_client.print(buf2, sizeof(buf2)));
-
-  if(num_active_flows_as_server.is_misbehaving(tv->tv_sec))
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[num_active_flows_as_server] %s %s",
-				 ip.print(buf, sizeof(buf)), num_active_flows_as_server.print(buf2, sizeof(buf2)));
-#endif
 
   GenericHashEntry::periodic_stats_update(tv);
 
@@ -927,9 +934,10 @@ void Host::serialize(json_object *my_object, DetailsLevel details_level) {
     json_object_object_add(my_object, "systemHost", json_object_new_boolean(isSystemHost()));
     json_object_object_add(my_object, "broadcastDomainHost", json_object_new_boolean(isBroadcastDomainHost()));
     json_object_object_add(my_object, "is_blacklisted", json_object_new_boolean(isBlacklisted()));
-
+    json_object_object_add(my_object, "host_services_bitmap", json_object_new_int(host_services_bitmap));
+    
     /* Generic Host */
-    json_object_object_add(my_object, "num_alerts", json_object_new_int(getNumTriggeredAlerts()));
+    json_object_object_add(my_object, "num_alerts", json_object_new_int(getNumEngagedAlerts()));
   }
 
   /* The value below is handled by reading dumps on disk as otherwise the string will be too long */
@@ -999,41 +1007,28 @@ bool Host::addIfMatching(lua_State* vm, u_int8_t *_mac) {
 
 /* *************************************** */
 
-void Host::incNumFlows(time_t t, bool as_client, Host *peer, Flow *f) {
+void Host::incNumFlows(time_t t, bool as_client) {
   AlertCounter *counter;
 
   if(as_client) {
     counter = flow_flood_attacker_alert;
-    num_active_flows_as_client.inc(1);
+    num_active_flows_as_client++;
   } else {
     counter = flow_flood_victim_alert;
-    num_active_flows_as_server.inc(1);
+    num_active_flows_as_server++;
   }
 
-  flowBeginEvent(f, t, as_client);
-
   counter->inc(t, this);
-  stats->incNumFlows(as_client, peer);
+  stats->incNumFlows(as_client);
 }
 
 /* *************************************** */
 
-void Host::decNumFlows(time_t t, bool as_client, Host *peer, Flow *f) {
-  if(as_client) {
-    if(num_active_flows_as_client.get())
-      num_active_flows_as_client.dec(1);
-    else
-      ntop->getTrace()->traceEvent(TRACE_WARNING, "Internal error: invalid counter value");
-  } else {
-    if(num_active_flows_as_server.get())
-      num_active_flows_as_server.dec(1);
-    else
-      ntop->getTrace()->traceEvent(TRACE_WARNING, "Internal error: invalid counter value");
-  }
-  
-  flowEndEvent(f, as_client);
-
-  stats->decNumFlows(as_client, peer);
+void Host::decNumFlows(time_t t, bool as_client) {
+  if(as_client)
+    num_active_flows_as_client--;
+  else
+    num_active_flows_as_server--;
 }
 
 /* *************************************** */
@@ -1088,7 +1083,9 @@ TrafficShaper* Host::get_shaper(ndpi_protocol ndpiProtocol, bool isIngress) {
 
 #ifdef SHAPER_DEBUG
     char buf[64];
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[%s@%u] SHARED Traffic Shaper", ip.print(buf, sizeof(buf)), vlan_id);
+
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[%s@%u] SHARED Traffic Shaper",
+				 ip.print(buf, sizeof(buf)), vlan_id);
 #endif
 
   }
@@ -1138,19 +1135,6 @@ void Host::luaUsedQuotas(lua_State* vm) {
     lua_newtable(vm);
 }
 #endif
-
-/* *************************************** */
-
-bool Host::incFlowAlertHits(time_t when) {
-  stats->incNumFlowAlerts();
-
-  if(flow_alert_counter
-     || (flow_alert_counter = new(std::nothrow) FlowAlertCounter(CONST_MAX_FLOW_ALERTS_PER_SECOND, CONST_MAX_THRESHOLD_CROSS_DURATION))) {
-    return flow_alert_counter->incHits(when);
-  }
-
-  return false;
-}
 
 /* *************************************** */
 
@@ -1304,6 +1288,42 @@ void Host::get_geocoordinates(float *latitude, float *longitude) {
 
 /* *************************************** */
 
+void Host::serialize_geocoordinates(ndpi_serializer *s, const char *prefix) {
+  char *continent = NULL, *country = NULL, *city = NULL, buf[64];
+  float latitude = 0, longitude = 0;
+  
+  ntop->getGeolocation()->getInfo(&ip, &continent, &country, &city, &latitude, &longitude);
+
+  if(city) {
+    snprintf(buf, sizeof(buf), "%s_city_name", prefix);
+    ndpi_serialize_string_string(s, buf, city);
+  }
+
+  if(country) {
+    snprintf(buf, sizeof(buf), "%s_country_name", prefix);
+    ndpi_serialize_string_string(s, buf, country);
+  }
+
+  if(continent) {
+    snprintf(buf, sizeof(buf), "%s_continent_name", prefix);
+    ndpi_serialize_string_string(s, buf, continent);
+  }
+
+  if(longitude) {
+    snprintf(buf, sizeof(buf), "%s_location_lon", prefix);
+    ndpi_serialize_string_float(s, buf, longitude, "%.f");
+  }
+
+  if(latitude) {
+    snprintf(buf, sizeof(buf), "%s_location_lat", prefix);
+    ndpi_serialize_string_float(s, buf, latitude, "%.f");
+  }
+
+  ntop->getGeolocation()->freeInfo(&continent, &country, &city);  
+}
+
+/* *************************************** */
+
 bool Host::isOneWayTraffic() const {
   /* When both directions are at zero, it means no periodic update has visited the host yet,
      so nothing can be said about its traffic directions. One way is only returned when 
@@ -1365,6 +1385,18 @@ void Host::checkStatsReset() {
 void Host::checkBroadcastDomain() {
   if(iface->reloadHostsBroadcastDomain())
     is_in_broadcast_domain = iface->isLocalBroadcastDomainHost(this, false /* Non-inline call */);
+}
+
+/* *************************************** */
+
+u_int16_t Host::incScoreValue(u_int16_t score_incr, ScoreCategory score_category, bool as_client) {
+  return score.incValue(score_incr, score_category, as_client);
+}
+
+/* *************************************** */
+
+u_int16_t Host::decScoreValue(u_int16_t score_decr, ScoreCategory score_category, bool as_client) {
+  return score.decValue(score_decr, score_category, as_client);
 }
 
 /* *************************************** */

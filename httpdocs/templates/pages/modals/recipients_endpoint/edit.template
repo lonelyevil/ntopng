@@ -4,21 +4,76 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="edit-recipient-modal-title">{{ i18n("endpoint_notifications.edit_recipient") }}: <span id="edit-recipient-name"></span></h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
+                <div class="modal-close">
+                    <div class="confirm-closing" style="display: none;">
+                        <span class='mx-2' style="vertical-align: middle;"><b>{{ i18n("endpoint_notifications.validation.abort_edit_recipient") }}</b></span>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-secondary cancel" type="button">{{ i18n("cancel") }}</button>
+                            <button data-dismiss="modal" class="btn btn-danger confirm" type="button">{{ i18n("abort") }}</button>
+                        </div>
+                    </div>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
             </div>
-            <form>
+            <form autocomplete="off">
                 <div class="modal-body">
-                    <input type="text" hidden name="recipient_name">
-                    <input type="text" hidden name="endpoint_conf_name">
+                    <input type="number" hidden name="recipient_id">
+                    <div class="form-group row">
+                        <label class="col-form-label col-sm-3" for="recipient-name-input">
+                            <b>{{ i18n("endpoint_notifications.recipient_name") }}</b>
+                        </label>
+                        <div class="col-sm-5">
+                            <input minlength="1" required name="recipient_name" type="text" class="form-control" id="edit-recipient-name-input">
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label class="col-form-label col-sm-3" for="recipient-name-input">
+                            <b>{{ i18n("endpoint_notifications.endpoint") }}</b>
+                        </label>
+                        <div class="col-sm-5">
+                            <input type="text" class="form-control" readonly name="endpoint_conf_name">
+                        </div>
+                    </div>
                     <div class="recipient-template-container">
+                    </div>
+                    <hr>
+                    <div class="form-group row">
+                        <label class="col-form-label col-sm-3" for="edit-recipient-severity-select">
+                            <b>{{ i18n("endpoint_notifications.recipient_severity") }}</b>
+                        </label>
+                        <div class="col-sm-5">
+                            <select required name="recipient_minimum_severity" class="form-control" id="edit-recipient-severity-select">
+                                {% for key, alert in pairsByField(alert_severities, 'severity_id', asc) do %}
+                                    <option {{ (alert.severity_id == 0 and 'selected' or '') }} value="{{ alert.severity_id }}">{{i18n("endpoint_notifications.severities."..key)}}</option>
+                                {% end %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label class="col-form-label col-sm-3" for="recipient-name-input">
+                            <b>{{ i18n("endpoint_notifications.recipient_category") }}</b>
+                        </label>
+                        <div class="col-sm-5">
+                            <select multiple name="recipient_user_script_categories" class="form-control selectpicker" id="edit-recipient-categories-select">
+                                {% for _, category in pairsByKeys(script_categories) do %}
+                                    <option value="{{ category.id }}">{{ i18n(category.i18n_title) }}</option>
+                                {% end %}
+                            </select>
+                        </div>
                     </div>
                     <span class="invalid-feedback"></span>
                 </div>
                 <div class="modal-footer">
-                    <button id="edit-test-recipient" class="btn btn-secondary mr-auto">{{ i18n("endpoint_notifications.test_recipient") }}</button>
+                    <div class="mr-auto">
+                        <button id="edit-test-recipient" class="btn btn-secondary" disabled type="test">
+                            <span style="display: none;" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            {{ i18n("endpoint_notifications.test_recipient") }}
+                        </button>
+                    </div>
                     <button type="submit" class="btn btn-primary">{{i18n("edit")}}</button>
+                    <span style="display: none;" class="alert alert-info test-feedback w-100"></span>
                 </div>
             </form>
         </div>

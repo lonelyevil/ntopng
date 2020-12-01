@@ -1,5 +1,8 @@
 #!/bin/sh -e
 
+# Previous package version on upgrade
+PREV_VERSION=$2
+
 case "$1" in
     configure)
 	# continue below
@@ -52,14 +55,6 @@ CRON_CONF=/etc/cron.d/ntopng
 echo "Rebuilding ld cache..."
 /sbin/ldconfig
 
-if [ ! -f /usr/local/bin/@APP@ ] && [ ! -L /usr/local/bin/@APP@ ] ; then
-    ln -s /usr/bin/@APP@ /usr/local/bin/@APP@
-fi
-
-if [ -d /usr/local/share/ntopng ] ; then
-    mv /usr/local/share/ntopng /usr/local/share/ntopng.disabled
-fi
-
 if [ -f /.dockerenv ]; then exit 0; fi
 
 # Start service after upgrade/install
@@ -67,17 +62,60 @@ echo "(Re)Starting @APP@..."
 if hash systemctl 2>/dev/null; then
     systemctl daemon-reload
     systemctl reset-failed
-    if hash deb-systemd-invoke 2>/dev/null; then
-        deb-systemd-invoke enable ntopng
-        deb-systemd-invoke restart ntopng
+
+    # Enable service on first installation only
+    if [ -z "$PREV_VERSION" ]; then
+        if hash deb-systemd-invoke 2>/dev/null; then
+            deb-systemd-invoke enable ntopng
+        else
+	    systemctl enable ntopng
+        fi
     else
-	systemctl enable ntopng
-	systemctl restart ntopng
+        # Check previous version as up to 4.1.201014
+        # service was disabled in prerm during an upgrade
+        # This check will be removed at some point
+        VERS_MAJ=$(echo $PREV_VERSION|cut -d "." -f 1)
+        VERS_MIN=$(echo $PREV_VERSION|cut -d "." -f 2|sed "s@^[^0-9]*\([0-9]\+\).*@\1@")
+        VERS_DATE=$(echo $PREV_VERSION|cut -d"." -f3|cut -d"-" -f1)
+        VERS_MAJ=$(printf "%02d" $VERS_MAJ)
+        VERS_MIN=$(printf "%02d" $VERS_MIN)
+        if [ "$VERS_MAJ$VERS_MIN$VERS_DATE" -lt "0401201015" ]; then
+            if hash deb-systemd-invoke 2>/dev/null; then
+                deb-systemd-invoke enable ntopng
+            else
+	        systemctl enable ntopng
+            fi
+        fi
+    fi
+
+    # Start service if enabled
+    if hash deb-systemd-invoke 2>/dev/null; then
+        systemctl -q is-enabled ntopng && deb-systemd-invoke restart ntopng
+    else
+	systemctl -q is-enabled ntopng && systemctl restart ntopng
     fi
     systemctl restart 'ntopng@*' --all
 elif [ -f /etc/init.d/ntopng ]; then
-    update-rc.d ntopng defaults 93 >/dev/null
+    if [ -z "$PREV_VERSION" ]; then
+        update-rc.d ntopng defaults 93 >/dev/null
+    fi
     /etc/init.d/ntopng restart
 fi
+
+echo ""
+echo "NOTE"
+echo ""
+echo "ntopng Community does not require a license."
+echo "ntopng Pro/Enterprise licenses are perpetual and include 1 year maintenance/updates:"
+echo "you can use the software even after maintenance is expired, however updating it after"
+echo "1 year would prevent ntopng from running. If you have automatic updates enabled, and"
+echo "maintenance is expired, it is recommended to put the package updates on hold with:"
+echo ""
+echo "apt-mark hold ntopng"
+echo ""
+echo "Automatic updates can be enabled again with:"
+echo ""
+echo "apt-mark unhold ntopng"
+echo ""
 
 exit 0

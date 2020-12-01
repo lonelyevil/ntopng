@@ -28,7 +28,20 @@ local already_printed = {}
 local results = {}
 local query = _GET["query"]
 local hosts_only = _GET["hosts_only"]
-if(query == nil) then query = "" end
+if (query == nil) then
+   query = ""
+else
+
+   -- clean trailing spaces
+   query = trimString(query)
+   -- remove any decorator from string end
+   -- this is done because to the result we append additional
+   -- information that the original string doesn't have
+   -- example: 'Consglio nazionale della Sicurezza' doesn't contain
+   -- the substring 'Consiglio Nazionale dei Ministri [xxxx]'
+   query = query:gsub("% %[.*%]*", "")
+
+end
 
 if not isEmptyString(_GET["ifid"]) then
    interface.select(_GET["ifid"])
@@ -119,7 +132,7 @@ if not hosts_only then
          results[#results + 1] = {
             type = "snmp",
 	    name = matching_mac .. ' '..title,
-	    ip = snmp_device_ip, 
+	    ip = snmp_device_ip,
             snmp_port_idx = snmp_port_idx
          }
          cur_results = cur_results + 1
@@ -147,7 +160,7 @@ if not hosts_only then
          results[#results + 1] = {
             type = "snmp",
 	    name = title,
-	    ip = snmp_device_ip, 
+	    ip = snmp_device_ip,
             snmp_port_idx = snmp_port_idx
          }
          cur_results = cur_results + 1
@@ -168,7 +181,7 @@ if not hosts_only then
          local title = snmp_utils.get_snmp_device_label(snmp_device["ip"])
          results[#results + 1] = {
             type = "snmp_device",
-	    name = title.." ["..i18n("snmp.snmp_device").."]", 
+	    name = title.." ["..i18n("snmp.snmp_device").."]",
 	    ip = snmp_device["ip"]
          }
          cur_results = cur_results + 1

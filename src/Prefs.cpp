@@ -63,7 +63,6 @@ Prefs::Prefs(Ntop *_ntop) {
   scripts_dir = strdup(CONST_DEFAULT_SCRIPTS_DIR);
   callbacks_dir = strdup(CONST_DEFAULT_CALLBACKS_DIR);
   pcap_dir = NULL;
-  prefs_dir = NULL;
 #ifdef HAVE_TEST_MODE
   test_script_path = NULL;
 #endif
@@ -77,7 +76,7 @@ Prefs::Prefs(Ntop *_ntop) {
   export_zmq_encryption_key = NULL;
   es_index = es_url = es_user = es_pwd = es_host = NULL;
   https_port = 0; // CONST_DEFAULT_NTOP_PORT+1;
-  change_user = true, daemonize = false;
+  change_user = true;
   user = strdup(CONST_DEFAULT_NTOP_USER);
   user_set = false;
   http_binding_address1 = NULL;
@@ -86,7 +85,7 @@ Prefs::Prefs(Ntop *_ntop) {
   https_binding_address2 = NULL;
   enable_client_x509_auth = false;
   timeseries_driver = ts_driver_rrd;
-  lan_interface = NULL;
+  lan_interface = wan_interface = NULL;
   cpu_affinity = other_cpu_affinity = NULL;
 #ifdef HAVE_LIBCAP
   CPU_ZERO(&other_cpu_affinity_mask);
@@ -99,16 +98,19 @@ Prefs::Prefs(Ntop *_ntop) {
   pid_path = strdup(DEFAULT_PID_PATH);
   packet_filter = NULL;
   num_interfaces = 0, enable_auto_logout = true, enable_auto_logout_at_runtime = true;
-  dump_flows_on_es = dump_flows_on_mysql = dump_flows_on_ls = false;
+  dump_flows_on_es = dump_flows_on_mysql = dump_flows_on_ls = dump_flows_on_nindex = false;
   dump_json_flows_on_disk = load_json_flows_from_disk_to_nindex = dump_ext_json = false;
   routing_mode_enabled = false;
   global_dns_forging_enabled = false;
-#if defined(NTOPNG_PRO) && defined(HAVE_NINDEX)
-  dump_flows_on_nindex = false;
+#ifdef NTOPNG_PRO
+  dump_flows_direct = false;
 #endif
   read_flows_from_mysql = false;
   enable_runtime_flows_dump = true;
   enable_activities_debug = false;
+#ifndef HAVE_NEDGE
+  appliance = false;
+#endif
 
   if(!(ifNames = (InterfaceInfo*)calloc(UNLIMITED_NUM_INTERFACES, sizeof(InterfaceInfo)))
      || !(deferred_interfaces_to_register = (char**)calloc(UNLIMITED_NUM_INTERFACES, sizeof(char*))))
@@ -117,6 +119,8 @@ Prefs::Prefs(Ntop *_ntop) {
   json_labels_string_format = true;
 #ifdef WIN32
   daemonize = true;
+#else
+  daemonize = false;
 #endif
   export_endpoint = NULL;
   enable_ixia_timestamps = enable_vss_apcon_timestamps = false;
@@ -136,6 +140,9 @@ Prefs::Prefs(Ntop *_ntop) {
   disable_dns_resolution();
   disable_dns_responses_decoding();
 #endif
+
+  /* All allowed */
+  iec104_allowed_typeids[0] = (u_int64_t)-1, iec104_allowed_typeids[1] = (u_int64_t)-1;
 }
 
 /* ******************************************* */
@@ -166,7 +173,6 @@ Prefs::~Prefs() {
   if(docs_dir)         free(docs_dir);
   if(scripts_dir)      free(scripts_dir);
   if(callbacks_dir)    free(callbacks_dir);
-  if(prefs_dir)        free(prefs_dir);
   if(pcap_dir)         free(pcap_dir);
   if(config_file_path) free(config_file_path);
   if(user)             free(user);
@@ -199,6 +205,7 @@ Prefs::~Prefs() {
   if(https_binding_address1) free(https_binding_address1);
   if(https_binding_address2) free(https_binding_address2);
   if(lan_interface)	free(lan_interface);
+  if(wan_interface)	free(wan_interface);
   if(ndpi_proto_path)	free(ndpi_proto_path);
 }
 
@@ -250,10 +257,6 @@ void usage() {
 	 "[--scripts-dir|-2] <path>           | Scripts directory.\n"
 	 "                                    | Default: %s\n"
 	 "[--callbacks-dir|-3] <path>         | Callbacks directory.\n"
-	 "                                    | Default: %s\n"
-	 "[--prefs-dir|-4] <path>             | Preferences directory used to serialize\n"
-	 "                                    | and deserialize file\n"
-	 "                                    | containing runtime preferences.\n"
 	 "                                    | Default: %s\n"
 	 "[--pcap-dir|-5] <path>              | Storage directory used for continuous traffic\n"
 	 "                                    | recording in PCAP format.\n"
@@ -331,6 +334,15 @@ void usage() {
 	 "[--dump-flows|-F] <mode>            | Dump expired flows. Mode:\n"
 #ifdef HAVE_NINDEX
 	 "                                    | nindex        Dump in nIndex (Enterprise only)\n"
+	 "                                    |   Format:\n"
+#ifdef NTOPNG_PRO
+	 "                                    |   nindex[;direct]\n"
+	 "                                    |   Note: the direct option delivers higher performance\n"
+	 "                                    |   with less detailed flow information (it dumps raw flows)\n"
+	 "                                    |   when collecting from ZMQ.\n"
+#else
+	 "                                    |   nindex\n"
+#endif
 #endif
 	 "                                    | es            Dump in ElasticSearch database\n"
 	 "                                    |   Format:\n"
@@ -413,7 +425,6 @@ void usage() {
 #endif
 	 CONST_DEFAULT_DOCS_DIR, CONST_DEFAULT_SCRIPTS_DIR,
          CONST_DEFAULT_CALLBACKS_DIR,
-	 CONST_DEFAULT_DATA_DIR,
 	 CONST_DEFAULT_DATA_DIR,
 	 CONST_DEFAULT_NTOP_PORT, CONST_DEFAULT_NTOP_PORT+1,
          CONST_DEFAULT_NTOP_USER,
@@ -768,6 +779,9 @@ static const struct option long_options[] = {
   { "zmq-encryption-key-priv",           required_argument, NULL, 220 },
   { "simulate-ips",                      required_argument, NULL, 221 },
   { "zmq-encryption-key",                required_argument, NULL, 222 },
+#ifndef HAVE_NEDGE
+  { "appliance",                    no_argument,       NULL, 223 },
+#endif
 #ifdef NTOPNG_PRO
   { "check-maintenance",                 no_argument,       NULL, 252 },
   { "check-license",                     no_argument,       NULL, 253 },
@@ -1010,9 +1024,7 @@ int Prefs::setOption(int optkey, char *optarg) {
       ntop->getTrace()->traceEvent(TRACE_ERROR,
 				   "Interface name too long (exceeding %d characters): ignored %s",
 				   MAX_INTERFACE_NAME_LEN - 1, optarg);
-    else if(num_deferred_interfaces_to_register < UNLIMITED_NUM_INTERFACES)
-      deferred_interfaces_to_register[num_deferred_interfaces_to_register++] = strdup(optarg);
-    else
+    else if(!addDeferredInterfaceToRegister(optarg))
       ntop->getTrace()->traceEvent(TRACE_ERROR, "Too many interfaces specified with -i: ignored %s", optarg);
     break;
 
@@ -1138,11 +1150,6 @@ int Prefs::setOption(int optkey, char *optarg) {
     callbacks_dir = strdup(optarg);
     break;
 
-  case '4':
-    if(prefs_dir) free(prefs_dir);
-    prefs_dir = strdup(optarg);
-    break;
-
   case '5':
     if(pcap_dir) free(pcap_dir);
     pcap_dir = strdup(optarg);
@@ -1205,6 +1212,11 @@ int Prefs::setOption(int optkey, char *optarg) {
     if(strncmp(optarg, "nindex", 2) == 0) {
       char *nindex_opt = strchr(optarg, ';');
       if(nindex_opt && strlen(nindex_opt) > 0) {
+#ifdef NTOPNG_PRO
+        if(strncmp(&nindex_opt[1], "direct", 6) == 0)
+          toggle_dump_flows_direct(true);
+        else
+#endif
         if(strncmp(&nindex_opt[1], "dump", 4) == 0)
           dump_json_flows_on_disk = dump_ext_json = true;
         else if(strncmp(&nindex_opt[1], "load", 4) == 0)
@@ -1418,10 +1430,6 @@ int Prefs::setOption(int optkey, char *optarg) {
     simulate_vlans = true;
     break;
 
-  case 221:
-    num_simulated_ips = atoi(optarg);
-    break;
-
   case 215:
     zmq_encryption_pwd = strdup(optarg);
     break;
@@ -1445,9 +1453,19 @@ int Prefs::setOption(int optkey, char *optarg) {
     zmq_encryption_priv_key = strdup(optarg);
     break;
 
+  case 221:
+    num_simulated_ips = atoi(optarg);
+    break;
+
   case 222:
     export_zmq_encryption_key = strdup(optarg);
     break;
+
+#ifndef HAVE_NEDGE
+  case 223:
+    appliance = true;
+    break;
+#endif
 
 #ifdef NTOPNG_PRO
   case 252:
@@ -1495,9 +1513,6 @@ int Prefs::checkOptions() {
   free(data_dir);
   data_dir = strdup(ntop->get_install_dir());
 
-  if(!prefs_dir)
-    prefs_dir = strdup(ntop->get_working_dir());
-
   if(!pcap_dir) 
     pcap_dir = strdup(ntop->get_working_dir());
 
@@ -1509,13 +1524,11 @@ int Prefs::checkOptions() {
   if(!docs_dir[0])      { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate docs dir");      return(-1); }
   if(!scripts_dir[0])   { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate scripts dir");   return(-1); }
   if(!callbacks_dir[0]) { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate callbacks dir"); return(-1); }
-  if(!prefs_dir[0])     { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate prefs dir");     return(-1); }
   if(!pcap_dir[0])      { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate pcap dir");   return(-1); }
 
   ntop->removeTrailingSlash(docs_dir);
   ntop->removeTrailingSlash(scripts_dir);
   ntop->removeTrailingSlash(callbacks_dir);
-  ntop->removeTrailingSlash(prefs_dir);
   ntop->removeTrailingSlash(pcap_dir);
 
   if(http_binding_address1 == NULL) http_binding_address1 = strdup(CONST_ANY_ADDRESS);
@@ -1648,7 +1661,7 @@ void Prefs::add_network_interface(char *name, char *description) {
 /* ******************************************* */
 
 void Prefs::add_default_interfaces() {
-  NetworkInterface *dummy = new NetworkInterface("dummy");
+  NetworkInterface *dummy = new (std::nothrow) NetworkInterface("dummy");
   dummy->addAllAvailableInterfaces();
   delete dummy;
 };
@@ -1688,16 +1701,20 @@ void Prefs::lua(lua_State* vm) {
 
   lua_push_uint64_table_entry(vm, "max_num_hosts", max_num_hosts);
   lua_push_uint64_table_entry(vm, "max_num_flows", max_num_flows);
-  lua_push_bool_table_entry(vm, "is_dump_flows_enabled", do_dump_flows());
-  lua_push_bool_table_entry(vm, "is_dump_flows_to_mysql_enabled", dump_flows_on_mysql || read_flows_from_mysql);
 
+  lua_push_bool_table_entry(vm, "is_dump_flows_enabled", do_dump_flows());
+  lua_push_bool_table_entry(vm, "is_dump_flows_runtime_enabled", is_runtime_flows_dump_enabled());
+#ifdef NTOPNG_PRO
+  lua_push_bool_table_entry(vm, "is_dump_flows_direct_enabled", do_dump_flows_direct());
+#endif
+
+  lua_push_bool_table_entry(vm, "is_dump_flows_to_mysql_enabled", dump_flows_on_mysql || read_flows_from_mysql);
+  if(mysql_dbname) lua_push_str_table_entry(vm, "mysql_dbname", mysql_dbname);
+  lua_push_bool_table_entry(vm, "is_dump_flows_to_es_enabled", dump_flows_on_es);
+  lua_push_bool_table_entry(vm, "is_dump_flows_to_ls_enabled", dump_flows_on_ls);
 #if defined(HAVE_NINDEX) && defined(NTOPNG_PRO)
   lua_push_bool_table_entry(vm, "is_nindex_enabled", do_dump_flows_on_nindex());
 #endif
-    
-  if(mysql_dbname) lua_push_str_table_entry(vm, "mysql_dbname", mysql_dbname);
-  lua_push_bool_table_entry(vm, "is_dump_flows_to_es_enabled",    dump_flows_on_es);
-  lua_push_bool_table_entry(vm, "is_dump_flows_to_ls_enabled", dump_flows_on_ls);
 
   lua_push_uint64_table_entry(vm, "http.port", get_http_port());
 
@@ -1772,7 +1789,7 @@ void Prefs::lua(lua_State* vm) {
   lua_push_str_table_entry(vm, "other_cpu_affinity", other_cpu_affinity ? other_cpu_affinity : (char*)"");
   lua_push_str_table_entry(vm, "user", change_user ? user : (char*)"");
 
-  lua_push_str_table_entry(vm, "capture_direction", Utils::captureDirection2Str(captureDirection)); 
+  lua_push_str_table_entry(vm, "capture_direction", Utils::captureDirection2Str(captureDirection));
 }
 
 /* *************************************** */
@@ -1815,6 +1832,30 @@ void Prefs::refreshDeviceProtocolsPolicyPref() {
 
 void Prefs::refreshDbDumpPrefs() {
   enable_runtime_flows_dump = getDefaultBoolPrefsValue(CONST_PREFS_ENABLE_RUNTIME_FLOWS_DUMP, true);
+}
+
+/* *************************************** */
+
+void Prefs::resetDeferredInterfacesToRegister() {
+  for(int i = 0; i < num_deferred_interfaces_to_register; i++) {
+    if(deferred_interfaces_to_register[i] != NULL) {
+      free(deferred_interfaces_to_register[i]);
+      deferred_interfaces_to_register[i] = NULL;
+    }
+  }
+  num_deferred_interfaces_to_register = 0;
+}
+
+/* *************************************** */
+
+bool Prefs::addDeferredInterfaceToRegister(const char *ifname) {
+  if(num_deferred_interfaces_to_register < UNLIMITED_NUM_INTERFACES) {
+    deferred_interfaces_to_register[num_deferred_interfaces_to_register] = strdup(ifname);
+    num_deferred_interfaces_to_register++;
+    return true;
+  } else {
+    return false;
+  }
 }
 
 /* *************************************** */
@@ -1936,4 +1977,31 @@ const char * const Prefs::getCaptivePortalUrl() {
   else
 #endif
     return CAPTIVE_PORTAL_URL;
+}
+
+/* *************************************** */
+
+void Prefs::setIEC104AllowedTypeIDs(char *protos) {
+  char *p, *tmp;
+  
+  if(!protos) return; else p = strtok_r(protos, ",", &tmp);
+
+  if((p != NULL) && (strcmp(p, "-1") == 0))
+    iec104_allowed_typeids[0] = (u_int64_t)-1, iec104_allowed_typeids[1] = (u_int64_t)-1; /* All */
+  else {
+    iec104_allowed_typeids[0] = (u_int64_t)0, iec104_allowed_typeids[1] = (u_int64_t)0;
+    
+    while(p != NULL) {
+      int type_id = atoi(p);
+      
+      /* ntop->getTrace()->traceEvent(TRACE_WARNING, "-> %d", type_id); */
+      
+      if(type_id < 64)
+	iec104_allowed_typeids[0] |= ((u_int64_t)1 << type_id);
+      else if(type_id < 128)
+	iec104_allowed_typeids[1] |= ((u_int64_t)1 << (type_id-64));
+      
+      p = strtok_r(NULL, ",", &tmp);
+    }
+  }
 }

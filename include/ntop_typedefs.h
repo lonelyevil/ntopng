@@ -73,6 +73,15 @@ typedef struct {
   struct timeval *tv;
 } periodic_stats_update_user_data_t;
 
+typedef enum {
+  /*
+    Two queues, one high- and one low-priority
+  */
+  recipient_notification_priority_low = 0,
+  recipient_notification_priority_high = 1,
+  RECIPIENT_NOTIFICATION_MAX_NUM_PRIORITIES = 2
+} RecipientNotificationPriority;
+
 /* Keep in sync with alert_consts.alerts_granularities and Utils */
 typedef enum {
   no_periodicity = -1,
@@ -84,12 +93,25 @@ typedef enum {
   /* IMPORTANT: update MAX_NUM_PERIODIC_SCRIPTS as new entries are added */
 } ScriptPeriodicity;
 
-#define MAX_NUM_PERIODIC_SCRIPTS 6
-
 typedef enum {
-  threshold_hourly = 0,
-  threshold_daily
-} ThresholdType;
+  script_category_other = 0,
+  script_category_security = 1,
+  script_category_internals = 2,
+  script_category_network = 3,
+  script_category_system = 4,
+  MAX_NUM_SCRIPT_CATEGORIES = 5
+} ScriptCategory; /* Keep in sync with user_scripts.script_categories in scripts/lua/modules/user_scripts.lua  */
+
+/*
+  This is a subset of ScriptCategory as flow scripts fall only in this subset
+ */
+typedef enum {
+  score_category_network = 0,
+  score_category_security,
+  MAX_NUM_SCORE_CATEGORIES
+} ScoreCategory;
+
+#define MAX_NUM_PERIODIC_SCRIPTS 6
 
 typedef enum {
   trend_unknown = 0,
@@ -135,11 +157,29 @@ typedef u_int32_t AlertType;
 #define alert_none ((u_int8_t)-1)
 
 typedef enum {
-  alert_level_none = -1,
-  alert_level_info = 0,
-  alert_level_warning,
-  alert_level_error
+  alert_level_none      = 0,
+  alert_level_debug     = 1,
+  alert_level_info      = 2,
+  alert_level_notice    = 3,
+  alert_level_warning   = 4,
+  alert_level_error     = 5,
+  alert_level_critical  = 6,
+  alert_level_alert     = 7,
+  alert_level_emergency = 8,
+  ALERT_LEVEL_MAX_LEVEL = 9
 } AlertLevel;
+
+/*
+  Used to group fine-grained AlertLevel into coarser-grained
+  groups. Each group contains one or multiple AlertLevel.
+ */
+typedef enum {
+  alert_level_group_none = 0,
+  alert_level_group_notice_or_lower = 1,
+  alert_level_group_warning = 2,
+  alert_level_group_error_or_higher = 3,
+  ALERT_LEVEL_GROUP_MAX_LEVEL = 4,
+} AlertLevelGroup;
 
 /*
   Keep in sync with alert_utils.lua:alert_entity_keys 
@@ -158,12 +198,6 @@ typedef enum {
   alert_entity_user,
   alert_entity_influx_db,
 } AlertEntity;
-
-typedef enum {
-  alert_on = 1,       /* An issue has been discovered and an alert has been triggered */
-  alert_off = 2,      /* A previous alert has been fixed */
-  alert_permanent = 3 /* Alert that can't be fixed (e.g. a flow with an anomaly) */
-} AlertStatus;
 
 typedef enum {
   IPV4 = 4,
@@ -265,7 +299,7 @@ typedef struct {
 typedef struct zmq_remote_stats {
   char remote_ifname[32], remote_ifaddress[64];
   char remote_probe_address[64], remote_probe_public_address[64];
-  char remote_probe_version[16], remote_probe_os[24];
+  char remote_probe_version[64], remote_probe_os[64];
   u_int8_t  source_id, num_exporters;
   u_int64_t remote_bytes, remote_pkts, num_flow_exports;
   u_int32_t remote_ifspeed, remote_time, local_time, avg_bps, avg_pps;
@@ -316,8 +350,8 @@ typedef u_int8_t FlowStatus;
 
 typedef enum {
   flow_lua_call_protocol_detected = 0,
-  flow_lua_call_periodic_update,
-  flow_lua_call_idle,
+  flow_lua_call_periodic_update = 1,
+  flow_lua_call_idle = 2,
 } FlowLuaCall;
 
 typedef enum {
@@ -327,6 +361,7 @@ typedef enum {
   flow_lua_call_exec_status_not_executed_unknown_call,          /* Call NOT executed as the function to be called is unknown */
   flow_lua_call_exec_status_not_executed_shutdown_in_progress,  /* Call NOT executed as a shutdown was in progress           */
   flow_lua_call_exec_status_not_executed_vm_not_allocated,      /* Call NOT executed as the vm wasn't allocated              */
+  flow_lua_call_exec_status_not_executed_not_pending,           /* Call NOT executed as other hooks have already been exec.  */
 } FlowLuaCallExecStatus;
 
 typedef enum {
@@ -371,13 +406,17 @@ typedef enum {
   column_traffic_unknown,
   column_num_flows_as_client,
   column_num_flows_as_server,
-  column_total_num_misbehaving_flows_as_client,
-  column_total_num_misbehaving_flows_as_server,
+  column_total_num_alerted_flows_as_client,
+  column_total_num_alerted_flows_as_server,
   column_total_num_unreachable_flows_as_client,
   column_total_num_unreachable_flows_as_server,
+  column_total_num_retx_sent,
+  column_total_num_retx_rcvd,
   column_total_alerts,
   column_pool_id,
   column_score,
+  column_score_as_client,
+  column_score_as_server,
   /* Macs */
   column_num_hosts,
   column_manufacturer,
@@ -410,11 +449,6 @@ typedef enum {
 } LuaCallback;
 
 typedef enum {
-  user_script_context_inline,
-  user_script_context_periodic,
-} UserScriptContext;
-
-typedef enum {
   walker_hosts = 0,
   walker_flows,
   walker_macs,
@@ -429,7 +463,8 @@ typedef enum {
   flowhashing_iface_idx,
   flowhashing_ingress_iface_idx,
   flowhashing_vlan,
-  flowhashing_vrfid /* VRF Id */
+  flowhashing_vrfid, /* VRF Id */
+  flowhashing_probe_ip_and_ingress_iface_idx,
 } FlowHashingEnum;
 
 typedef enum {
@@ -457,18 +492,6 @@ struct keyval {
   const char *key;
   char *val;
 };
-
-typedef struct {
-  u_int64_t shadow_head;
-  u_char __cacheline_padding_1[56];
-  volatile u_int64_t head;
-  u_char __cacheline_padding_2[56];
-  volatile u_int64_t tail;
-  u_char __cacheline_padding_3[56];
-  u_int64_t shadow_tail;
-  u_char __cacheline_padding_4[56];
-  void *items[QUEUE_ITEMS];
-} spsc_queue_t;
 
 class StringCache {
  public:
@@ -608,8 +631,10 @@ struct ntopngLuaContext {
   Host *host;
   NetworkStats *network;
   Flow *flow;
-  FlowAlertCheckLuaEngine *flow_acle;
   bool localuser;
+
+  /* Capabilities bitmap */
+  u_int64_t capabilities;
 
   /* Packet capture */
   struct {
@@ -688,6 +713,22 @@ typedef struct {
   char *allowedNets;
   char *language;
 } HTTPAuthenticator;
+
+/*
+  An enum to identify possible capabilities for non-admin web users.
+  Enum i-th will represent the i-th bit in a 64-bit bitmap of user capabilities
+ */
+typedef enum {
+  capability_pools = 0,
+  capability_notifications = 1,
+  capability_snmp = 2,
+  capability_active_monitoring = 3,
+  capability_preferences = 4,
+  capability_developer = 5,
+  capability_user_scripts = 6,
+  capability_flowdevices = 7,
+  MAX_NUM_USER_CAPABILITIES = 8 /* Do NOT go above 63 */
+} UserCapabilities;
 
 typedef struct {
   double namelookup, connect, appconnect, pretransfer, redirect, start, total;

@@ -44,6 +44,7 @@ third-party/zeromq-*/tools/curve_keygen.o
 httpdocs/geoip/*
 httpdocs/ssl/ntopng-cert.pem
 httpdocs/misc/ntopng-utils-manage-config
+httpdocs/misc/ntopng-utils-manage-updates
 include/config.h.in
 autom4te.cache*
 *#
@@ -59,6 +60,7 @@ nDPI
 ntopng
 packages/*.spec
 packages/etc/systemd/system/ntopng.service
+packages/etc/systemd/system/ntopng@.service
 Makefile
 *.pcap
 *.lua.cpp
@@ -89,3 +91,4 @@ prime/
 stage/
 parts/
 hooks/.enabled
+dump.rdb

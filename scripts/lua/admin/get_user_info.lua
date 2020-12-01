@@ -17,9 +17,6 @@ if(haveAdminPrivileges()) then
 
 	 if value["group"] == "captive_portal" then
 	    print(' "host_pool_id": "'..value["host_pool_id"]..'",\n')
-	    if value["limited_lifetime"] then
-	       print(' "limited_lifetime": '..value["limited_lifetime"]..',\n')
-	    end
 	 else
 	    print(' "allowed_nets": "'..value["allowed_nets"]..'",\n')
 	    print(' "allowed_ifname": "'..value["allowed_ifname"]..'",\n')
@@ -51,8 +48,11 @@ if(haveAdminPrivileges()) then
          if value["allow_pcap_download"] then
            print(' "allow_pcap_download": true,\n')
          end
+		
+	local api_token = ntop.getUserAPIToken(key) or ""
 
 	 print(' "username": "'..key..'",\n')
+	 print(' "api_token": "' ..api_token.. '",\n')
 	 print(' "password": "'..value["password"]..'",\n')
 	 print(' "full_name": "'..value["full_name"]..'",\n')
 	 print(' "group": "'..value["group"]..'"\n')

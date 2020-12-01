@@ -211,7 +211,7 @@ class GenericHashEntry {
    * 
    */
   virtual bool is_hash_entry_state_idle_transition_ready() const {
-    return(true); 
+    return getUses() == 0 && is_active_entry_now_idle(MAX_HASH_ENTRY_IDLE);
   }
 
   /**
@@ -219,14 +219,6 @@ class GenericHashEntry {
    * 
    */
   virtual bool is_active_entry_now_idle(u_int max_idleness) const;
-    
-  /**
-   * @brief Function in charge of hash entry offline state updates
-   *
-   * @param user_date A pointer to user submitted data potentially necessary for the update
-   * 
-   */
-  virtual void periodic_hash_entry_state_update(void *user_data);
   
   /**
    * @brief Function in charge of updating periodic entry stats (e.g., its throughput or L7 traffic)
@@ -242,7 +234,7 @@ class GenericHashEntry {
   bool equal(GenericHashEntry *b)         { return((this == b) ? true : false); };  
   inline NetworkInterface* getInterface() { return(iface);                      };
   bool idle() const;
-  virtual void housekeep(time_t t)     { return;                 };
+  virtual void housekeep(time_t t)  { return;                 };
   inline u_int get_duration()    const { return((u_int)(1+last_seen-first_seen)); };
   virtual u_int32_t key()              { return(0);         };  
   virtual char* get_string_key(char *buf, u_int buf_len) const { buf[0] = '\0'; return(buf); };

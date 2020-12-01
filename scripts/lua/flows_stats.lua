@@ -50,6 +50,7 @@ local outIfIdx = _GET["outIfIdx"]
 
 local traffic_type = _GET["traffic_type"]
 local flow_status  = _GET["flow_status"]
+local flow_status_severity  = _GET["flow_status_severity"]
 local tcp_state    = _GET["tcp_flow_state"]
 local port         = _GET["port"]
 local network_id   = _GET["network"]
@@ -73,7 +74,7 @@ if (page == "flows" or page == nil) then
    page_utils.print_page_title(active_msg)
 
 print [[
-      <div id="table-flows"></div>
+      <div class='table-responsive'><div id="table-flows"></div></div>
         <script>
    var url_update = "]]
 
@@ -135,6 +136,10 @@ end
 
 if(flow_status ~= nil) then
    page_params["flow_status"] = flow_status
+end
+
+if(flow_status_severity ~= nil) then
+   page_params["flow_status_severity"] = flow_status_severity
 end
 
 if(tcp_state ~= nil) then

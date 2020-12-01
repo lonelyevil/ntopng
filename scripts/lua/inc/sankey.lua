@@ -63,7 +63,7 @@ function sankey() {
       height = h - margin.top - margin.bottom;
 
   var formatNumber = d3.format(",.0f"),
-    format = function(sent, rcvd) { return "[sent: " + bytesToVolume(sent) + ", rcvd: " + bytesToVolume(rcvd)+"]"; },
+    format = function(sent, rcvd) { return "[sent: " + NtopUtils.bytesToVolume(sent) + ", rcvd: " + NtopUtils.bytesToVolume(rcvd)+"]"; },
     color = d3.scale.category20();
 
 ]]
@@ -85,7 +85,7 @@ print [[
 
     if ((hosts.links.length == 0) && (hosts.nodes.length == 0)) {
       if(! sankey_has_chart)
-	$('#alert_placeholder').html('<div class="alert alert-warning"><button type="button" class="close" data-dismiss="alert">x</button><strong>Warning: </strong>]] print(i18n("no_talkers_for_the_host")) print[[.</div>');
+	$('#alert_placeholder').html("<div class=\"alert alert-warning\"><button type=\"button\" class=\"close\" data-dismiss=\"alert\">x</button><strong>Warning: </strong>]] print(i18n("no_talkers_for_the_host")) print[[.</div>");
       return;
     }
 
@@ -219,7 +219,7 @@ print(url.."hosts=".._GET["hosts"])
 
 
   link.append("title")
-    .text(function(d) { return d.source.name + " - " + d.target.name + "\n" + bytesToVolume(d.value)+ "\n Double click to show more information about this flows." ; });
+    .text(function(d) { return d.source.name + " - " + d.target.name + "\n" + NtopUtils.bytesToVolume(d.value)+ "\n Double click to show more information about this flows." ; });
 debugger;
   var node = svg_sankey.append("g").selectAll(".node")
     .data(hosts.nodes)

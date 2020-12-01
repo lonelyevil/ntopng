@@ -127,6 +127,8 @@
 #define GRAFANA_URL               "/lua/modules/grafana"
 #define LIVE_TRAFFIC_URL          "/lua/live_traffic.lua"
 #define POOL_MEMBERS_ASSOC_URL    "/lua/admin/manage_pool_members.lua"
+#define REST_API_PREFIX           "/lua/rest/"
+#define REST_API_PRO_PREFIX       "/lua/pro/rest/"
 #define INTERFACE_DATA_URL        "/lua/rest/get/interface/data.lua"
 #define MAX_PASSWORD_LEN          32 + 1 /* \0 */
 #define HTTP_SESSION_DURATION              43200  // 12h
@@ -166,14 +168,16 @@
 #define MAX_USER_NETS_VAL_LEN     255
 #define NUM_HOSTS_RESOLVED_BITS   2 << 19 /* ~1 million */
 #define HOST_FAMILY_ID            ((u_int16_t)-1)
-#define FLOW_PURGE_FREQUENCY      2 /* sec */
+#define FLOW_PURGE_FREQUENCY      1 /* sec */
 #define HOST_PURGE_FREQUENCY      3 /* sec */
 #define OTHER_PURGE_FREQUENCY     5 /* sec - Other = ASs, MAC, Countries, VLANs */
 #define MAX_TCP_FLOW_IDLE        15 /* sec - how long to wait before idling a TCP flow with FIN/RST set or with incomplete TWH */
 #define MAX_FLOW_IDLE            60 /* sec */
 #define MAX_LOCAL_HOST_IDLE     300 /* sec */
 #define MAX_REMOTE_HOST_IDLE     60 /* sec */
+#define MAX_HASH_ENTRY_IDLE      60 /* sec - Generic idle time for hash entries different from hosts and flows (i.e., ASes and Macs) */
 #define MAX_RRD_QUEUE_LEN        200000 /* timeseries in the queue */
+#define MIN_NUM_IDLE_ENTRIES_IF  5000
 #define INTF_RRD_RAW_DAYS        1
 #define INTF_RRD_1MIN_DAYS       30
 #define INTF_RRD_1H_DAYS         100
@@ -183,7 +187,7 @@
 #define OTHER_RRD_1H_DAYS        100
 #define OTHER_RRD_1D_DAYS        365
 #define CONST_DEFAULT_TOP_TALKERS_ENABLED        false
-#define PURGE_FRACTION           32 /* check 1/32 of hashes per iteration */
+#define PURGE_FRACTION           60 /* check 1/60 of hashes per iteration */
 #define MIN_NUM_VISITED_ENTRIES  1024
 #define MAX_NUM_QUEUED_ADDRS    500 /* Maximum number of queued address for resolution */
 #define MAX_NUM_QUEUED_CONTACTS 25000
@@ -205,7 +209,7 @@
 #define CUSTOM_NDPI_PROTOCOLS_ASSOCIATIONS_HASH "ntop.prefs.custom_nDPI_proto_categories"
 #define TRAFFIC_FILTERING_CACHE            "ntopng.trafficfiltering.cache"
 #define TRAFFIC_FILTERING_TO_RESOLVE       "ntopng.trafficfiltering.toresolve"
-#define PREFS_CHANGED            "ntopng.prefs_changed"
+#define PREFS_CHANGED            "ntopng.cache.prefs_changed"
 #define DROP_HOST_TRAFFIC        "ntopng.prefs.drop_host_traffic"
 #define HOST_TRAFFIC_QUOTA       "ntopng.prefs.hosts_quota"
 #define HTTP_ACL_MANAGEMENT_PORT "ntopng.prefs.http_acl_management_port"
@@ -233,6 +237,8 @@
 #define SYSLOG_PRODUCERS_MAP_KEY "ntopng.syslog.ifid_%u.producers_map"
 #define NTOPNG_PREFS_PREFIX     "ntopng.prefs"
 #define NTOPNG_CACHE_PREFIX     "ntopng.cache"
+#define NTOPNG_USER_PREFIX      "ntopng.user"
+#define NTOPNG_API_TOKEN_PREFIX "ntopng.api_tokens"
 #define MAC_CUSTOM_DEVICE_TYPE  NTOPNG_PREFS_PREFIX".device_types.%s"
 #define NTOP_HOSTS_SERIAL       "ntopng.host_serial"
 #define MAX_NUM_INTERFACE_IDS   256
@@ -252,15 +258,17 @@
 #define CONST_STR_NTOPNG_LICENSE       "ntopng.license"
 #define CONST_STR_NTOPNG_KEY           "ntopng.key"
 #define CONST_STR_PRODUCT_NAME_KEY     "ntopng.product_name"
-#define CONST_STR_USER_GROUP           "ntopng.user.%s.group"
-#define CONST_STR_USER_FULL_NAME       "ntopng.user.%s.full_name"
-#define CONST_STR_USER_PASSWORD        "ntopng.user.%s.password"
-#define CONST_STR_USER_NETS            "ntopng.user.%s.allowed_nets"
-#define CONST_STR_USER_ALLOWED_IFNAME  "ntopng.user.%s.allowed_ifname"
-#define CONST_STR_USER_HOST_POOL_ID    "ntopng.user.%s.host_pool_id"
-#define CONST_STR_USER_LANGUAGE        "ntopng.user.%s.language"
-#define CONST_STR_USER_ALLOW_PCAP      "ntopng.user.%s.allow_pcap"
-#define CONST_STR_USER_EXPIRE          "ntopng.user.%s.expire"
+#define CONST_STR_USER_GROUP           NTOPNG_USER_PREFIX".%s.group"
+#define CONST_STR_USER_FULL_NAME       NTOPNG_USER_PREFIX".%s.full_name"
+#define CONST_STR_USER_PASSWORD        NTOPNG_USER_PREFIX".%s.password"
+#define CONST_STR_USER_NETS            NTOPNG_USER_PREFIX".%s.allowed_nets"
+#define CONST_STR_USER_ALLOWED_IFNAME  NTOPNG_USER_PREFIX".%s.allowed_ifname"
+#define CONST_STR_USER_HOST_POOL_ID    NTOPNG_USER_PREFIX".%s.host_pool_id"
+#define CONST_STR_USER_LANGUAGE        NTOPNG_USER_PREFIX".%s.language"
+#define CONST_STR_USER_ALLOW_PCAP      NTOPNG_USER_PREFIX".%s.allow_pcap"
+#define CONST_STR_USER_EXPIRE          NTOPNG_USER_PREFIX".%s.expire"
+#define CONST_STR_USER_CAPABILITIES    NTOPNG_USER_PREFIX".%s.capabilities"
+#define CONST_STR_USER_API_TOKEN       NTOPNG_USER_PREFIX".%s.api_token"
 #define CONST_ALLOWED_NETS             "allowed_nets"
 #define CONST_ALLOWED_IFNAME           "allowed_ifname"
 #define CONST_USER_LANGUAGE            "language"
@@ -306,33 +314,12 @@
 #define CONST_MAX_NUM_NETWORKS         255
 #define CONST_MAX_NUM_CHECKPOINTS      4
 
-#define BATADV_COMPAT_VERSION_15 15
-#define BATADV_COMPAT_VERSION_14 14
-
-//batman-adv compat version 14 packet types
-#define BATADV14_IV_OGM		 0x01
-#define BATADV14_ICMP		 0x02
-#define BATADV14_UNICAST	 0x03
-#define BATADV14_BCAST		 0x04
-#define BATADV14_VIS		 0x05
-#define BATADV14_UNICAST_FRAG	 0x06
-#define BATADV14_TT_QUERY	 0x07
-#define BATADV14_ROAM_ADV	 0x08
-#define BATADV14_UNICAST_4ADDR	 0x09
-#define BATADV14_CODED		 0x0a
+#define HOST_IS_DHCP_SERVER            0x01
+#define HOST_IS_DNS_SERVER             0x02
+#define HOST_IS_NTP_SERVER             0x03
+#define HOST_IS_SMTP_SERVER            0x04
 
 
-// batman-adv compat version 15 packet types
-#define BATADV15_IV_OGM          0x00
-#define BATADV15_BCAST           0x01
-#define BATADV15_CODED           0x02
-#define BATADV15_UNICAST_MIN     0x40
-#define BATADV15_UNICAST         0x40
-#define BATADV15_UNICAST_FRAG    0x41
-#define BATADV15_UNICAST_4ADDR   0x42
-#define BATADV15_ICMP            0x43
-#define BATADV15_UNICAST_TVLV    0x44
-#define BATADV15_UNICAST_MAX     0x7f
 
 // ICMP
 #ifndef ICMP_TIMESTAMP
@@ -517,7 +504,6 @@
 #define CONST_LUA_PARAM_ERROR         -1
 #define CONST_MAX_NUM_SYN_PER_SECOND     25 /* keep in sync with alert_utils.lua */
 #define CONST_MAX_NEW_FLOWS_SECOND       25 /* keep in sync with alert_utils.lua */
-#define CONST_MAX_FLOW_ALERTS_PER_SECOND 2
 #define CONST_ALERT_GRACE_PERIOD      60 /* No more than 1 alert/min */
 #define CONST_CONTACTED_BY            "contacted_by"
 #define CONST_CONTACTS                "contacted_peers" /* Peers contacted by this host */
@@ -536,12 +522,14 @@
 /* Maximum line lenght for the line protocol to write timeseries */
 #define LINE_PROTOCOL_MAX_LINE             512
 
+#define CONST_IEC104_ALERT_QUEUE           "ntopng.iec104_alert_queue"
 #define CONST_INFLUXDB_FILE_QUEUE          "ntopng.influx_file_queue"
 #define CONST_INFLUXDB_FLUSH_TIME          10 /* sec */
 #define CONST_INFLUXDB_MAX_DUMP_SIZE       4194304 /* 4 MB */
 #define CONST_FLOW_ALERT_EVENT_QUEUE       "ntopng.cache.ifid_%d.flow_alerts_events_queue"
-#define SQLITE_ALERTS_QUEUE_SIZE           512
-#define ALERTS_NOTIFICATIONS_QUEUE_SIZE    4096
+#define SQLITE_ALERTS_QUEUE_SIZE           8192
+#define ALERTS_NOTIFICATIONS_QUEUE_SIZE    8192
+#define MAX_NUM_RECIPIENTS                 64 /* keep in sync with Recipients.lua recipients.MAX_NUM_RECIPIENTS */
 #define INTERNAL_ALERTS_QUEUE_SIZE         1024
 #define CONST_REMOTE_TO_REMOTE_MAX_QUEUE   32
 #define CONST_SQL_QUEUE                        "ntopng.sql_queue"
@@ -638,6 +626,7 @@
 #define DISAGGREGATION_PROBE_IP                        "probe_ip"
 #define DISAGGREGATION_IFACE_ID                        "iface_idx"
 #define DISAGGREGATION_INGRESS_IFACE_ID                "ingress_iface_idx"
+#define DISAGGREGATION_INGRESS_PROBE_IP_AND_IFACE_ID   "probe_ip_and_ingress_iface_idx"
 #define DISAGGREGATION_INGRESS_VRF_ID                  "ingress_vrf_id"
 #define DISAGGREGATION_VLAN                            "vlan"
 #define DISAGGREGATION_NONE                            "none"
@@ -656,11 +645,10 @@
 #define CONST_MAX_ES_MSG_QUEUE_LEN    8192
 #define CONST_MAX_MYSQL_QUEUE_LEN     8192
 #define CONST_MAX_NUM_READ_ALERTS     32
-#define CONST_MAX_THRESHOLD_CROSS_DURATION 3
 #define CONST_MAX_ACTIVITY_DURATION    86400 /* sec */
 #define CONST_TREND_TIME_GRANULARITY   1 /* sec */
 #define CONST_DEFAULT_PRIVATE_NETS     "192.168.0.0/16,172.16.0.0/12,10.0.0.0/8,127.0.0.0/8"
-#define CONST_DEFAULT_LOCAL_NETS       "127.0.0.0/8"
+#define CONST_DEFAULT_LOCAL_NETS       "127.0.0.0/8,fe80::/10"
 #define CONST_DEFAULT_ALL_NETS         "0.0.0.0/0,::/0"
 
 #define CONST_NUM_RESOLVERS            2
@@ -692,7 +680,7 @@
 #define FLOW_LUA_CALL_PROTOCOL_DETECTED_FN_NAME  "protocolDetected"
 #define FLOW_LUA_CALL_PERIODIC_UPDATE_FN_NAME    "periodicUpdate"
 #define FLOW_LUA_CALL_IDLE_FN_NAME               "flowEnd"
-#define FLOW_LUA_CALL_PERIODIC_UPDATE_SECS       30
+#define FLOW_LUA_CALL_PERIODIC_UPDATE_SECS       60 /* One minute */
 
 /* Tiny Flows */
 #define CONST_DEFAULT_IS_TINY_FLOW_EXPORT_ENABLED        true  /* disabled by default */
@@ -791,9 +779,10 @@
 // MySQL-related defined
 #define MYSQL_MAX_NUM_FIELDS  255
 #define MYSQL_MAX_NUM_ROWS    1000
+#define MYSQL_MAX_QUEUE_LEN   2048
 // nIndex-related
 #ifdef HAVE_NINDEX
-#define NINDEX_MAX_NUM_INTERFACES 8
+#define NINDEX_MAX_NUM_INTERFACES 16
 #endif
 
 #ifdef NTOPNG_PRO
@@ -870,23 +859,23 @@
 #define NTOPNG_WIDGET_URL                    "/widgets/"
 
 #define CONST_MAX_NUM_THREADED_ACTIVITIES 64
-#define STARTUP_SCRIPT_PATH        "startup.lua"
-#define BOOT_SCRIPT_PATH           "boot.lua" /* Executed as root before networking is setup */
-#define SHUTDOWN_SCRIPT_PATH         "shutdown.lua"
-#define HOUSEKEEPING_SCRIPT_PATH     "housekeeping.lua"
-#define DISCOVER_SCRIPT_PATH         "discover.lua"
-#define TIMESERIES_SCRIPT_PATH       "timeseries.lua"
-#define UPGRADE_SCRIPT_PATH          "upgrade.lua"
-#define PINGER_SCRIPT_PATH           "pinger.lua"
-#define SECOND_SCRIPT_PATH           "second.lua"
-#define MINUTE_SCRIPT_PATH           "minute.lua"
-#define HT_STATE_UPDATE_SCRIPT_PATH  "ht_state_update.lua"
-#define STATS_UPDATE_SCRIPT_PATH     "stats_update.lua"
-#define PERIODIC_USER_SCRIPTS_PATH   "periodic_user_scripts.lua"
-#define THIRTY_SECONDS_SCRIPT_PATH   "30sec.lua"
-#define FIVE_MINUTES_SCRIPT_PATH     "5min.lua"
-#define HOURLY_SCRIPT_PATH           "hourly.lua"
-#define DAILY_SCRIPT_PATH            "daily.lua"
+#define STARTUP_SCRIPT_PATH                  "startup.lua"
+#define BOOT_SCRIPT_PATH                     "boot.lua" /* Executed as root before networking is setup */
+#define SHUTDOWN_SCRIPT_PATH                 "shutdown.lua"
+#define HOUSEKEEPING_SCRIPT_PATH             "housekeeping.lua"
+#define DISCOVER_SCRIPT_PATH                 "discover.lua"
+#define TIMESERIES_SCRIPT_PATH               "timeseries.lua"
+#define NOTIFICATIONS_SCRIPT_PATH            "notifications.lua"
+#define UPGRADE_SCRIPT_PATH                  "upgrade.lua"
+#define PINGER_SCRIPT_PATH                   "pinger.lua"
+#define SECOND_SCRIPT_PATH                   "second.lua"
+#define MINUTE_SCRIPT_PATH                   "minute.lua"
+#define STATS_UPDATE_SCRIPT_PATH             "stats_update.lua"
+#define PERIODIC_USER_SCRIPTS_PATH           "periodic_user_scripts.lua"
+#define THIRTY_SECONDS_SCRIPT_PATH           "30sec.lua"
+#define FIVE_MINUTES_SCRIPT_PATH             "5min.lua"
+#define HOURLY_SCRIPT_PATH                   "hourly.lua"
+#define DAILY_SCRIPT_PATH                    "daily.lua"
 
 #define SYSLOG_SCRIPT_PATH           "callbacks/system/syslog.lua"
 #define SYSLOG_SCRIPT_CALLBACK_EVENT "handleEvent"
@@ -940,6 +929,8 @@
 #define MAX_HTTP_AUTHENTICATOR_RETURN_DATA_LEN      4096
 #define PREF_NTOP_LOCAL_AUTH          NTOPNG_PREFS_PREFIX".local.auth_enabled"
 
+#define NTOP_API_TOKENS               "ntopng.api_tokens"
+
 /* Elastic Search */
 #define NTOP_ES_TEMPLATE              "ntopng_template_elk.json"
 #define NTOP_ES6_TEMPLATE             "ntopng_template_elk6.json"
@@ -971,10 +962,6 @@
 #define MAX_NUM_HTTP_REPLACEMENTS                    4
 
 #define CACHE_LINE_LEN          64
-#define QUEUE_ITEMS             2048 /* pow of 2 */
-#define QUEUE_ITEMS_MASK        (QUEUE_ITEMS - 1)
-#define QUEUE_WATERMARK         8 /* pow of 2 */
-#define QUEUE_WATERMARK_MASK    (QUEUE_WATERMARK - 1)
 
 #define BITMAP_NUM_BITS               64
 
@@ -1040,12 +1027,36 @@ extern struct ntopngLuaContext* getUserdata(struct lua_State *vm);
 
 #define COMPANION_QUEUE_LEN          4096
 
+/*
+  Queue lengths for flow-dump-related queues
+ */
+#define MAX_IDLE_FLOW_QUEUE_LEN      131072
+#define MAX_ACTIVE_FLOW_QUEUE_LEN    131072
+
+/*
+  Queue lengths for user-script queues
+ */
+#define MAX_US_PROTOCOL_DETECTED_QUEUE_LEN 131072
+#define MAX_US_FLOW_END_QUEUE_LEN          131072
+#define MAX_US_PERIODIC_UPDATE_QUEUE_LEN   16384  /* Smaller, lower-priority */
+
+/*
+  user-script lua engine lifetime 
+ */
+#define HOOKS_ENGINE_LIFETIME              600    /* Seconds */
+
+/*
+  Queue length for view interfaces
+ */
+
+#define MAX_VIEW_INTERFACE_QUEUE_LEN       131072
+
 #ifdef NTOPNG_EMBEDDED_EDITION
 #define DEFAULT_THREAD_POOL_SIZE     1
 #define MAX_THREAD_POOL_SIZE         1
 #else
 #define DEFAULT_THREAD_POOL_SIZE     2
-#define MAX_THREAD_POOL_SIZE         5
+#define MAX_THREAD_POOL_SIZE        32
 #endif
 
 #define DONT_NOT_EXPIRE_BEFORE_SEC        15 /* sec */
@@ -1059,6 +1070,8 @@ extern struct ntopngLuaContext* getUserdata(struct lua_State *vm);
 #define ALERT_ACTION_ENGAGE           "engage"
 #define ALERT_ACTION_RELEASE          "release"
 #define ALERT_ACTION_STORE            "store"
+
+#define SCORE_MAX_SCRIPT_VALUE            1024 /* Keep in sync with flow_consts.max_score in scripts/lua/modules/flow_consts.lua */
 
 //#define PROFILING
 #ifdef PROFILING

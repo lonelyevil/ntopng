@@ -1,45 +1,64 @@
 {#
     (C) 2020 - ntop.org
+
+    This is the template to generate the Manage Pool page.
 #}
 <div class="row">
     <div class="col-md-12 mb-4">
-        {# import the navbar inside the pool page to navigate through the pool tables #}
-        {* template_utils.gen("pages/components/nav_tabs.template", menu) *}
-    </div>
-    <div class="col-md-12 mb-4">
-        <table class="table table-bordered table-striped w-100" id="table-pools">
-            <thead>
-                <tr>
-                    <th>{{ i18n("pools.name") }}</th>
-                    <th>{{ i18n("pools.members") }}</th>
-                    <th>{{ i18n("pools.recipients") }}</th>
-                    <th>{{ i18n("pools.configuration") }}</th>
-                    <th>{{ i18n("actions") }}</th>
-                </tr>
-            </thead>
-            <tbody>
-            </tbody>
-        </table>
+        <div class="card card-shadow">
+            <div class="card-header">
+                {# import the navbar inside the pool page to navigate through the pool tables #}
+                {* template_utils.gen("pages/components/nav_tabs.template", menu) *}
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-striped w-100" id="table-pools">
+                        <thead>
+                            <tr>
+                                <th>{{ i18n("pools.name") }}</th>
+                                {% if pool.is_all_pool then %}
+                                <th>{{ i18n("pools.family") }}</th>
+                                {% end %}
+                                <th>{{ i18n("pools.members") }}</th>
+                                <th>{{ i18n("pools.recipients") }}</th>
+                                <th>{{ i18n("pools.configuration") }}</th>
+                                <th>{{ i18n("actions") }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                {* ui_utils.render_configuration_footer('pool') *}
+            </div>
+        </div>
     </div>
 </div>
 
 {# include the modal to add a new pool #}
 {* template_utils.gen("pages/modals/pools/pool_modal.template", {
-    modal_type = "add",
-    pool = pool,
+modal_type = "add",
+pool = pool,
 }) *}
 {# include the modal to edit an existing pool #}
 {* template_utils.gen("pages/modals/pools/pool_modal.template", {
-    modal_type = "edit",
-    pool = pool,
+modal_type = "edit",
+pool = pool,
 }) *}
 {* template_utils.gen("pages/modals/pools/remove_pool.template", {
-    modal_type = "remove",
-    pool = pool
+modal_type = "remove",
+pool = pool
+}) *}
+
+{* template_utils.gen("pages/modals/factory-reset.template", {
+    body = i18n("endpoint_notifications.factory_reset.body", { reset_element = i18n("pools.pools") }),
+    title = i18n("endpoint_notifications.factory_reset.title", { reset_element = i18n("pools.pools") })
 }) *}
 
 
-<link href="{{ ntop.getHttpPrefix() }}/datatables/datatables.min.css" rel="stylesheet"/>
+<link href="{{ ntop.getHttpPrefix() }}/datatables/datatables.min.css" rel="stylesheet" />
 <script type="text/javascript">
 
     let addCsrf = "{{ ntop.getRandomCSRFValue() }}";
@@ -49,12 +68,16 @@
     const all_members = {* json.encode(pool.all_members) *};
     const endpoints = {* json.encode(pool.endpoints) *};
     const poolType = "{{ pool.name }}";
-    const defaultPoolId = {{ pool.instance.DEFAULT_POOL_ID }};
+
+    const ADD_POOL_DISABLED = {{ (not pool.is_all_pool and pool.instance:default_only() or false)}};
+    const IS_ALL_POOL = {{ pool.is_all_pool }};
+    const DEFAULT_POOL_ID = {{ (pool.instance.DEFAULT_POOL_ID or 0) }};
+    const IS_NEDGE = {{ is_nedge or false }};
 
     Object.freeze(all_members);
     Object.freeze(endpoints);
 
-    i18n.warning ="{{ i18n('warning', {}) }}";
+    i18n.warning = "{{ i18n('warning', {}) }}";
     i18n.showing_x_to_y_rows = "{{ i18n('showing_x_to_y_rows', {x='_START_', y='_END_', tot='_TOTAL_'}) }}";
     i18n.search = "{{ i18n('search') }}";
     i18n.delete = "{{ i18n('delete') }}";
@@ -65,6 +88,8 @@
     i18n.other = "{{ i18n('other') }}";
     i18n.and = "{{ i18n('and') }}";
     i18n.unbounded_members = "{{ i18n('pools.unbounded_members') }}";
+
+    i18n.poolFamilies = {* json.encode(pool.pool_families) *};
 
     i18n.rest = {
         INVALID_HOST: "{{ i18n('rest_consts.INVALID_HOST') }}",

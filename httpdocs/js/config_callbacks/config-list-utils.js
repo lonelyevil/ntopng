@@ -18,7 +18,7 @@ const resetConfig = () => {
     params.csrf = pageCsrf;
     params.action = "reset_config";
 
-    var form = paramsToForm('<form method="post"></form>', params);
+    var form = NtopUtils.paramsToForm('<form method="post"></form>', params);
     form.appendTo('body').submit();
 }
 
@@ -54,46 +54,59 @@ $(document).ready(function() {
 
         const action_column = {
             pools: -1,
-            width: '10%',
+            width: '200px',
             data: null,
             className: 'text-center',
             render: function(data, type, row) {
 
                 let rv = `
-                    <a class="btn btn-info" href='edit_configset.lua?confset_id=${data.id}&subdir=${subdir}' title='${i18n.edit}'>
+                    <a class="btn btn-info btn-sm" href='edit_configset.lua?confset_id=${data.id}&subdir=${subdir}' title='${i18n.edit}'>
                         <i class='fas fa-edit'></i>
+                    </a>
+                    <a href='#' title='${i18n.clone}' class="btn btn-sm btn-info ${DEFAULT_CONFIG_ONLY ? "disabled" : ''}"  data-toggle="modal" data-target="#clone-modal">
+                        <i class='fas fa-clone'></i>
+                    </a>
+                    <a href='#' title='${i18n.rename}' class="btn btn-sm btn-info ${(data.id == 0 || DEFAULT_CONFIG_ONLY) ? `disabled` : ''}" data-toggle="modal" data-target="#rename-modal">
+                        <i class='fas fa-pencil-alt'></i>
+                    </a>
+                    <a href='#' title='${i18n.delete}' class="btn btn-sm btn-danger ${(data.id == 0 || DEFAULT_CONFIG_ONLY) ? 'disabled' : ''}" data-toggle="modal" data-target="#delete-modal">
+                        <i class='fas fa-trash'></i>
                     </a>
                 `;
 
-                if(!default_config_only)
-                    rv += `
-                        <a href='#' title='${i18n.clone}' class="btn btn-info" data-toggle="modal" data-target="#clone-modal">
-                            <i class='fas fa-clone'></i>
-                        </a>
-                    `;
-                if(data.id != 0)
-                    rv += `
-                         <a href='#' title='${i18n.rename}' class="btn btn-info" data-toggle="modal" data-target="#rename-modal">
-                            <i class='fas fa-pencil-alt'></i>
-                        </a>
-                        <a href='#' title='${i18n.delete}' class="btn btn-danger" data-toggle="modal" data-target="#delete-modal">
-                            <i class='fas fa-trash'></i>
-                        </a>
-                    `;
-
-                return `<div class='btn-group btn-group-sm'>${rv}</div>`;
+                return `<div>${rv}</div>`;
             }
         }
 
-        if (default_config_only) return [name_column, action_column];
+        if (DEFAULT_CONFIG_ONLY) return [name_column, action_column];
 
         return [name_column, pools_column, action_column];
     }
 
     const $config_table = $("#config-list").DataTable({
         lengthChange: false,
+        dom: "<'d-flex'<'mr-auto'l><'dt-search'f>B>rtip",
         pagingType: 'full_numbers',
         stateSave: true,
+        buttons: {
+            buttons: [
+                {
+                    text: '<i class="fas fa-sync"></i>',
+                    className: 'btn-link',
+                    action: function (e, dt, node, config) {
+                        $config_table.ajax.reload();
+                    }
+                }
+            ],
+            dom: {
+                button: {
+                    className: 'btn btn-link'
+                },
+                container: {
+                    className: 'border-left ml-1 float-right'
+                }
+            }
+        },
         initComplete: function() {
             // clear searchbox datatable
             $(".dataTables_filter").find("input[type='search']").val('').trigger('keyup');
@@ -167,7 +180,7 @@ $(document).ready(function() {
             .then((data, result, xhr) => {
 
                 // check if the status code is successfull
-                if (check_status_code(xhr.status, xhr.statusText, $("#clone-error"))) return;
+                if (NtopUtils.check_status_code(xhr.status, xhr.statusText, $("#clone-error"))) return;
 
                 // re-enable button
                 $button.removeAttr("disabled");
@@ -187,7 +200,7 @@ $(document).ready(function() {
             })
             .fail(({status, statusText}) => {
 
-                check_status_code(status, statusText, $("#clone-error"));
+                NtopUtils.check_status_code(status, statusText, $("#clone-error"));
                 // re-enable button
                 $button.removeAttr("disabled");
             })
@@ -245,7 +258,7 @@ $(document).ready(function() {
             .done((data, status, xhr) => {
 
                 // check if the status code is successfull
-                if (check_status_code(xhr.status, xhr.statusText, $("#rename-error"))) return;
+                if (NtopUtils.check_status_code(xhr.status, xhr.statusText, $("#rename-error"))) return;
 
                 $button.removeAttr("disabled");
 
@@ -265,7 +278,7 @@ $(document).ready(function() {
             })
             .fail(({status, statusText}, st, xhr) => {
 
-                check_status_code(status, statusText, $("#rename-error"));
+                NtopUtils.check_status_code(status, statusText, $("#rename-error"));
 
                 // re-enable button
                 $button.removeAttr("disabled");
@@ -303,7 +316,7 @@ $(document).ready(function() {
             .done((data, status, xhr) => {
 
                 // check if the status code is successfull
-                if (check_status_code(xhr.status, xhr.statusText, $("#delete-error"))) return;
+                if (NtopUtils.check_status_code(xhr.status, xhr.statusText, $("#delete-error"))) return;
 
                 $button.removeAttr("disabled");
 
@@ -323,7 +336,7 @@ $(document).ready(function() {
             })
             .fail(({status, statusText}) => {
 
-                check_status_code(status, statusText, $("#delete-error"));
+                NtopUtils.check_status_code(status, statusText, $("#delete-error"));
 
                 // re-enable button
                 $button.removeAttr("disabled");
@@ -339,13 +352,4 @@ $(document).ready(function() {
 
     });
 
-    // handle import modal
-    importModalHelper({
-        load_config_xhr: (json_conf) => {
-          return $.post(`${http_prefix}/lua/rest/set/scripts/config.lua`, {
-            csrf: pageCsrf,
-            JSON: json_conf,
-          });
-        }
-    });
 });

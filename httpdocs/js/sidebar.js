@@ -1,57 +1,121 @@
-const fix_submenu_height = ($submenu, $hover_button) => {
+const fixSubMenuPosition = ($submenu, $hoverButton) => {
 
-    const document_height = $(document).height();
-    const submenu_height = $submenu.height();
-    const delta_y = $hover_button.offset().top;
-    const submenu_parent_height = $submenu.parent().outerHeight();
+    const MIN_SPACE = 20;
+    const MIN_HEIGHT = 150;
 
-    const min_height = 128;
+    let distFromAbove = $hoverButton.position().top;
+    const submenuHeight = $submenu.height();
+    const documentHeight = $(window).height();
 
-    if (delta_y + submenu_height > document_height) {
+    // if the submenu is too high to be shown then set
+    // the overflow on y axis
+    if (submenuHeight + distFromAbove >= documentHeight) {
 
-        let max_height = document_height - delta_y - 32;
-        $submenu.css('overflow-y', 'auto');
-
-        if (max_height <= min_height) {
-            $submenu.css({'top': `-${submenu_height - submenu_parent_height}px`});
-            return;
+        const currentSubmenuHeight = documentHeight - distFromAbove;
+        if (currentSubmenuHeight <= MIN_HEIGHT) {
+            distFromAbove = distFromAbove - submenuHeight + $hoverButton.outerHeight();
         }
-      
-        $submenu.css({'max-height': `${max_height}px`});
+        else {
+            $submenu.css({'max-height': currentSubmenuHeight - MIN_SPACE, 'overflow-y': 'auto'})
+        }
+
     }
+
+    // set the submenu height
+    $submenu.css('top', `${distFromAbove}px`);
 
 };
 
-$(document).ready(function () {
-    
+$(window).scroll(function(){
 
-    const is_mobile_device = () => {
-        return window.matchMedia('(min-width: 320px) and (max-width: 480px) ').matches;
+    const UPPER_LIMIT = 32;
+    const navbarHeight = $(`#n-navbar`).height();
+    const windowScrollTop = $(this).scrollTop();
+
+    if (windowScrollTop >= UPPER_LIMIT) {
+        $(`#n-navbar`).addClass("scrolled bg-light");
     }
-    
-    if (is_mobile_device()) {
-        $(`div[id$='submenu']`).removeClass('side-collapse');
+    else {
+        $(`#n-navbar`).removeClass("scrolled bg-light");
+    }
+
+});
+
+$(document).ready(() => {
+
+    const toggleSidebar = () => {
+        // if the layer doesn't exists then create it
+        if ($(`.sidebar-close-layer`).length == 0) {
+
+            const $layer = $(`<div class='sidebar-close-layer' style='display:none'></div>`);
+            // when the user clicks on the layer
+            $layer.click(function(){
+                // remove active class from sidebar
+                $(`#n-sidebar`).removeClass('active');
+                // hide the layer and remove it from the DOM
+                $layer.fadeOut(function() {
+                    $(this).remove();
+                });
+            });
+
+            // append the layer to the wrapper
+            $(`#wrapper`).append($layer);
+            // show the layer inside the page
+            $layer.fadeIn();
+        }
+        else {
+            // hide the existing layer and destroy it
+            $(`.sidebar-close-layer`).fadeOut(function() {
+                $(this).remove();
+            });
+        }
+
+        // show/hide the sidebar
+        $(`#n-sidebar`).toggleClass('active');
     }
 
     $(`#n-sidebar a.submenu`).mouseenter(function() {
 
         const $submenu = $(this).parent().find(`div[id$='submenu']`);
-        $submenu.collapse('show').css('top', '0').css('max-height', 'initial');
-        fix_submenu_height($submenu, $(this));
-        $(this).attr('aria-expanded', true);
+        fixSubMenuPosition($submenu, $(this));
+        $submenu.collapse('show');
 
+        $(this).attr('aria-expanded', true);
     });
+
     $(`div[id$='submenu']`).mouseenter(function() {
         $(this).addClass('show');
     });
     $(`div[id$='submenu']`).mouseleave(function() {
         $(this).removeClass('show');
+        $(this).css({'max-height': 'initial'});
     });
-   
+
     $(`#n-sidebar a.submenu`).mouseleave(function() {
         const $submenu = $(this).parent().find(`div[id$='submenu']`);
         $submenu.removeClass('show');
         $(this).attr('aria-expanded', false);
+    });
+
+    /* toggle sidebar display */
+    $(`button[data-toggle='sidebar']`).click(function() {
+        toggleSidebar();
+    });
+
+    $(`#iface-select`).change(function() {
+
+        const action = $(this).val();
+        const $form = $(this).parents('form');
+
+        $form.attr('action', action);
+
+        if (!systemInterfaceEnabled) {
+            toggleSystemInterface(true);
+        }
+        else {
+            toggleSystemInterface(false, $form);
+        }
+
     });
 
 });
@@ -59,12 +123,12 @@ $(document).ready(function () {
 $(window).resize(function() {
 
     // re-calc submenu height
-    const $current_submenu = $('#n-sidebar').find(`div.show[id$='submenu']`);
+    const $currentSubmenu = $('#n-sidebar').find(`div.show[id$='submenu']`);
 
-    if ($current_submenu.length > 0) {
+    if ($currentSubmenu.length > 0) {
 
-        const $hover_button = $current_submenu.parent().find(`a[data-toggle='collapse']`);
-        fix_submenu_height($current_submenu, $hover_button);
+        const $hoverButton = $currentSubmenu.parent().find(`a[data-toggle='collapse']`);
+        fixSubMenuPosition($currentSubmenu, $hoverButton);
     }
 
 });

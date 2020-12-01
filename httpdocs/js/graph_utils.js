@@ -17,9 +17,12 @@ function getSerieLabel(schema, serie, visualization, serie_index) {
   if(visualization && visualization.metrics_labels && visualization.metrics_labels[serie_index])
     return visualization.metrics_labels[serie_index];
 
-  if(serie.ext_label)
-      return serie.ext_label;
-  else if((schema == "top:local_senders") || (schema == "top:local_receivers")) {
+    if(serie.ext_label) {
+	if(new_label)
+	    return serie.ext_label + " (" + new_label + ")";
+	else
+	    return serie.ext_label;
+    }  else if((schema == "top:local_senders") || (schema == "top:local_receivers")) {
     if(serie.ext_label)
       return serie.ext_label;
     else
@@ -73,13 +76,13 @@ function getSerieLabel(schema, serie, visualization, serie_index) {
   }
 
   if(schema_2_label[schema])
-    return capitaliseFirstLetter(schema_2_label[schema]);
+    return NtopUtils.capitaliseFirstLetter(schema_2_label[schema]);
 
   if(new_label)
-    return capitaliseFirstLetter(new_label);
+    return NtopUtils.capitaliseFirstLetter(new_label);
 
   // default
-  return capitaliseFirstLetter(data_label);
+  return NtopUtils.capitaliseFirstLetter(data_label);
 }
 
 // Value formatter
@@ -93,11 +96,13 @@ function getValueFormatter(schema, metric_type, series, custom_formatter, stats)
 
       for(var i=0; i<custom_formatter.length; i++) {
         // translate function name to actual function
-        var fn = window[custom_formatter[i]];
+        const functionName = custom_formatter[i].replace("NtopUtils.", "")
+        const formatterFunction = NtopUtils[functionName];
 
-        if(typeof fn !== "function")
+        if(typeof formatterFunction !== "function")
           console.error("Cannot find custom value formatter \"" + custom_formatter + "\"");
-        formatters[i] = fn;
+
+        formatters[i] = formatterFunction;
       }
 
       return(formatters);
@@ -107,32 +112,32 @@ function getValueFormatter(schema, metric_type, series, custom_formatter, stats)
 
     if(label.contains("bytes")) {
       if(schema.contains("volume") || schema.contains("memory") || schema.contains("size"))
-        return [bytesToSize, bytesToSize];
+        return [NtopUtils.bytesToSize, NtopUtils.bytesToSize];
       else
-        return [fbits_from_bytes, bytesToSize];
+        return [NtopUtils.fbits_from_bytes, NtopUtils.bytesToSize];
     } else if(label.contains("packets"))
-      return [fpackets, formatPackets];
+      return [NtopUtils.fpackets, NtopUtils.formatPackets];
       else if(label.contains("points"))
-      return [fpoints, formatPoints];
+      return [NtopUtils.fpoints, formatPoints];
     else if(label.contains("flows")) {
       var as_counter = ((metric_type === "counter") && (schema !== "custom:memory_vs_flows_hosts"));
-      return [as_counter ? fflows : formatValue, formatFlows, as_counter ? fflows : formatFlows];
+      return [as_counter ? NtopUtils.fflows : NtopUtils.formatValue, NtopUtils.formatFlows, as_counter ? NtopUtils.fflows : NtopUtils.formatFlows];
     } else if(label.contains("millis") || label.contains("_ms")) {
-      return [fmillis, fmillis];
+      return [NtopUtils.fmillis, NtopUtils.fmillis];
     } else if(label.contains("alerts") && (metric_type === "counter")) {
-      return [falerts, falerts];
+      return [NtopUtils.falerts, NtopUtils.falerts];
     } else if(label.contains("percent")) {
-      return [fpercent, fpercent];
+      return [NtopUtils.fpercent, NtopUtils.fpercent];
     }
   }
 
   // fallback
   if(stats && (stats.max_val < 1)) {
     /* Use the float formatter to avoid having the same 0 value repeated into the scale */
-    return [ffloat, ffloat];
+    return [NtopUtils.ffloat, NtopUtils.ffloat];
   }
 
-  return [fint,fint];
+  return [NtopUtils.fint,NtopUtils.fint];
 }
 
 function makeFlatLineValues(tstart, tstep, num, data) {
@@ -305,7 +310,7 @@ function fixTimeRange(chart, params, align_step, actual_step) {
     chart.tick_step = tick_step;
   } else
     chart.tick_step = null;
-  
+
   chart.x_fmt = fmt;
 }
 
@@ -333,7 +338,7 @@ function findActualStep(raw_step, tstart) {
 }
 
 function has_initial_zoom() {
-  return typeof parseQuery(window.location.search).epoch_begin !== "undefined";
+  return typeof NtopUtils.parseQuery(window.location.search).epoch_begin !== "undefined";
 }
 
 var current_zoom_level = (history.state) ? (history.state.zoom_level) : 0;
@@ -494,11 +499,11 @@ function attachStackedChartCallback(chart, schema_name, chart_id, zoom_reset_id,
        * Other solutions (documented in https://stackoverflow.com/questions/21075245/nvd3-prevent-repeated-values-on-y-axis)
        * are not easily applicable in this case.
        *
-       * NOTE: the problem should not occur when using ffloat
+       * NOTE: the problem should not occur when using NtopUtils.ffloat
        */
-      if(chart.yAxis1.tickFormat() != ffloat)
+      if(chart.yAxis1.tickFormat() != NtopUtils.ffloat)
         chart.yAxis1.ticks(Math.min(cur_domain_y1, num_ticks_y1));
-      if(chart.yAxis2.tickFormat() != ffloat)
+      if(chart.yAxis2.tickFormat() != NtopUtils.ffloat)
         chart.yAxis2.ticks(Math.min(cur_domain_y2, num_ticks_y2));
     }
 
@@ -557,7 +562,7 @@ function attachStackedChartCallback(chart, schema_name, chart_id, zoom_reset_id,
       if(is_user_zoom || e.push_state) {
         //console.log("zoom IN!");
         current_zoom_level += 1;
-        var url = getHistoryParameters({epoch_begin: t_start, epoch_end: t_end});
+        var url = NtopUtils.getHistoryParameters({epoch_begin: t_start, epoch_end: t_end});
         history.pushState({zoom_level: current_zoom_level, range: [t_start, t_end]}, "", url);
       }
 
@@ -908,7 +913,7 @@ function attachStackedChartCallback(chart, schema_name, chart_id, zoom_reset_id,
             is_disabled = true;
 
           res.push({
-            key: capitaliseFirstLetter(key),
+            key: NtopUtils.capitaliseFirstLetter(key),
             yAxis: 1,
             values: values,
             type: "line",

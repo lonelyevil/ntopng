@@ -6,8 +6,9 @@ local title = users_type["ntopng"]
 
 page_utils.print_page_title(title)
 
+
 print [[
-      <div id="table-users"></div>
+    <div class='table-responsive'><div id="table-users"></div></div>
 	 <script>
 	 $("#table-users").datatable({
 		url: "]]
@@ -18,6 +19,23 @@ print [[",
 		buttons: [
 			"<a href='#add_user_dialog' role='button' class='add-on btn' data-toggle='modal'><i class='fas fa-plus fa-sm'></i></a>"
 		],
+		tableCallback: function() {
+
+			// if there is `user` get param then open the user's modal
+			let user = "]] print(_GET["user"]) print [[";
+			if (user !== "nil" && isAdministrator) {
+
+				reset_pwd_dialog(user);
+				// set the preference tab
+				$(`#change-password-dialog`).removeClass('active');
+				$(`a[href='#change-password-dialog']`).removeClass('active');
+				$(`#li_change_prefs > a`).addClass('active');
+				$(`#change-prefs-dialog`).tab('show');
+				// show the modal
+				$(`#password_dialog`).modal('show');
+			}
+
+		},
 		columns: [
 			{
 				title: "]] print(i18n("login.username")) print[[",

@@ -1,6 +1,4 @@
 (function ($) {
-    /* Assign a unique ID to each modal */
-    let modal_id_ctr = 0;
 
     /* Use with:
      *
@@ -8,37 +6,148 @@
      */
     class ModalHandler {
 
-        /* element is the form object */
-        constructor(element, options) {
-            /* Check mandatory options */
-            if (typeof options.csrf === "undefined")
-                throw "ModalHandler: Missing CSRF token!";
+        constructor(form, options) {
 
-            this.element = element;
-            this.dialog = $(element).closest(".modal");
+            if (typeof options.csrf === "undefined") {
+                throw new Error("ModalHandler::Missing CSRF token!");
+            }
+
+            this.element = form;
+            this.dialog = $(form).closest(".modal");
+
             this.options = options;
             this.csrf = options.csrf;
             this.dontDisableSubmit = options.dontDisableSubmit;
+
             this.observer = new MutationObserver((list) => {
                 this.bindFormValidation();
+                this.toggleFormSubmission();
+                this.initDataPatterns();
             });
+
             this.observer.observe(this.element[0], {
                 childList: true,
                 subtree: true
             });
 
-            const submitButton = $(this.element).find(`[type='submit']`);
-            if (submitButton.length == 0)
-                throw "The submit button was not found inside the form!";
+            this.initialState = null;
+            this.currentState = null;
+            this.firstCloseAttempt = false;
+            this.isSubmitting = false;
 
-            this.cleanFormOnModalClose();
+            const submitButton = $(this.element).find(`[type='submit']`);
+            if (submitButton.length == 0) {
+                throw new Error("ModalHandler::The submit button was not found inside the form!");
+            }
+
+            submitButton.attr("disabled", "disabled");
 
         }
 
-        cleanFormOnModalClose() {
+        initDataPatterns() {
+            NtopUtils.initDataPatterns();
+        }
+
+        /**
+         * Create a form's snapshot to save a form state
+         */
+        createFormSnapshot() {
+
+            const snapshot = {
+                inputs: {},
+                hidden: []
+            };
+
+            $(this.element).find('textarea,select,input[type!="radio"]').each(function () {
+
+                const type = $(this).prop('nodeName').toLowerCase();
+                const name = $(this).attr('name');
+                snapshot.inputs[`${type}[name='${name}']`] = $(this).val();
+            });
+
+            $(this.element).find(`[style='display: none;'], span.invalid-feedback`).each(function () {
+                snapshot.hidden.push($(this));
+            });
+
+            return snapshot;
+        }
+
+        compareFormSnaphsot(s1, s2) {
+
+            if (s1 == null || s2 == null) return true;
+
+            for (let [key, value] of Object.entries(s1.inputs)) {
+                if (s2.inputs[key] != value) return false;
+            }
+
+            return true;
+        }
+
+        delegateModalClosing() {
 
             const self = this;
-            $(this.element).parents('.modal').on('hidden.bs.modal', function() {
+
+            $(this.dialog).find('button.cancel').off('click').click(function () {
+
+                self.firstCloseAttempt = false;
+                $(self.element)[0].reportValidity();
+                $(self.dialog).find('.confirm-closing').fadeOut(100, function () {
+                    $(self.dialog).find('button.close').fadeIn(100);
+                });
+            });
+
+            $(this.dialog).off('hide.bs.modal').on('hide.bs.modal', function (event) {
+
+                if (self.isSubmitting) {
+                    event.preventDefault();
+                    return;
+                }
+
+                // if the form state hasn't changed then don't show the message
+                if (self.compareFormSnaphsot(self.currentState, self.initialState)) {
+                    return;
+                }
+
+                if (self.firstCloseAttempt) return;
+                // abort the modal closing event
+                event.preventDefault();
+
+                // flag a close attempt has been invoked
+                self.firstCloseAttempt = true;
+
+                // show an alert to inform the user
+                $(self.dialog).find('button.close').fadeOut(100, function () {
+                    $(self.dialog).find('.confirm-closing').fadeIn(100);
+                });
+
+                return;
+
+            });
+
+            $(this.dialog).off('hidden.bs.modal').on('hidden.bs.modal', function (event) {
+
+                // for each input inside the form restore the initial value
+                // from the snapshot taken at init
+                for (const [selector, value] of Object.entries(self.initialState.inputs)) {
+                    $(self.dialog).find(selector).val(value);
+                    $(self.dialog).find(selector).removeClass('is-invalid');
+                }
+
+                // hide the shwon elements
+                self.initialState.hidden.forEach(($hidden) => {
+                    $hidden.hide();
+                });
+
+                self.element.find(`[type='submit']`).attr("disabled", "disabled");
+                self.currentState = null;
+                self.firstCloseAttempt = false;
+
+                $(self.dialog).find('.confirm-closing').fadeOut(100, function () {
+                    $(self.dialog).find('button.close').fadeIn(100);
+                });
+
+                // clean the form when the modal is closed
+                // to prevent the fields flickering
                 self.cleanForm();
             });
         }
@@ -47,15 +156,22 @@
             return this.options.loadFormData();
         }
 
-        invokeModalInit() {
+        invokeModalInit(data = {}) {
 
             const self = this;
 
-            this.options.onModalInit(this.fillFormModal());
+            // reset form values when the modal closes
+            this.delegateModalClosing();
+            this.data = data || this.fillFormModal();
+            this.options.onModalInit(this.data, this);
 
-            $(this.element).parents('.modal').on('show.bs.modal', function() {
+            $(this.element).parents('.modal').on('show.bs.modal', function () {
                 self.options.onModalShow();
             });
+
+            // create a initial form snapshot to restore elements on closing
+            this.initialState = this.createFormSnapshot();
+            this.currentState = null;
 
             this.delegateResetButton();
         }
@@ -63,64 +179,176 @@
         delegateSubmit() {
 
             this.bindFormValidation();
+
             const self = this;
-            this.submitHandler = function(e) {
+
+            this.submitHandler = function (e) {
                 if (!self.options.isSyncRequest) {
                     e.preventDefault();
                     e.stopPropagation();
                     self.makeRequest();
                 }
-                else {
-                    aysResetForm(self.form_sel);
-                }
             };
+
             $(this.element).on('submit', this.submitHandler);
         }
 
         bindFormValidation() {
 
-            $(this.element).find(`input,select,textarea`).each(function(i, input) {
+            const self = this;
 
+            // handle input validation
+            $(this.element).find(`input,select,textarea`).each(async function (i, input) {
+
+                // jQuery object of the current input
                 const $input = $(this);
+                // id to handle the current timeout set to show errors
+                let timeoutId = -1;
 
-                function checkValidation(insertError) {
+                const validHostname = async () => {
 
-                    const $parent = $input.parent();
-                    let $error = $parent.find(`.invalid-feedback`);
-                    if ($error.length == 0) $error = $(`<span class='invalid-feedback'></span>`);
+                    // show the spinner to the user and set the input to readonly
+                    const $spinner = $input.parent().find('.spinner-border');
+                    $input.attr("readonly", true);
+                    $spinner.show();
 
-                    if (!input.validity.valid && input.validationMessage) {
+                    const response = await NtopUtils.resolveDNS($(input).val());
 
-                        $input.addClass('is-invalid');
-                        $error.text(input.validationMessage);
+                    // hide the spinner and renable write to the input
+                    $input.removeAttr("readonly");
+                    $spinner.hide();
 
-                        if (insertError) $parent.append($error);
+                    // if the response was negative then alert the user
+                    if (response.rc < 0) {
+                        input.setCustomValidity(response.rc_str);
+                        return [false, i18n[response.rc_str]];
                     }
-                    else {
-                        $input.removeClass('is-invalid');
-                        $error.remove();
-                    }
 
+                    // return success for valid resolved hostnmae
+                    input.setCustomValidity("");
+
+                    return [true, "Success"];
                 }
 
-                $(this).off('input').on('input', function(e) {
-                    if (!$input.attr("formnovalidate"))
-                        checkValidation(false);
+                const validInput = async (validation) => {
+
+                    // if the input require to validate host name then perform a DNS resolve
+                    if (validation.data.resolveDNS && $input.val().match(NtopUtils.REGEXES.domainName)) {
+                        return await validHostname();
+                    }
+
+                    if (validation.data.cannotBeEmpty && validation.isInputEmpty) {
+                        // trigger input validation flag
+                        input.setCustomValidity("Please fill the input.");
+                        return [false, validation.data.validationEmptyMessage || i18n.missing_field];
+                    }
+
+                    if (input.validity.patternMismatch) {
+                        input.setCustomValidity("Pattern mismatch.");
+                        return [false, validation.data.validationMessage || i18n.invalid_field];
+                    }
+
+                    if (input.validity.rangeOverflow) {
+                        input.setCustomValidity("Value exceed the maximum value.");
+                        return [false, validation.data.rangeOverflowMessage || i18n.invalid_field];
+                    }
+
+                    if (input.validity.rangeUnderflow) {
+                        input.setCustomValidity("Value is under the minimum value.");
+                        return [false, validation.data.rangeUnderflowMessage || i18n.invalid_field];
+                    }
+
+                    // set validation to true
+                    input.setCustomValidity("");
+                    return [true, "Success"];
+                }
+
+                const checkValidation = async () => {
+
+                    const validation = {
+                        data: {
+                            validationMessage: $input.data('validationMessage'),
+                            validationEmptyMessage: $input.data('validationEmptyMessage'),
+                            cannotBeEmpty: ($input.attr('required') === "required") || ($input.data("validationNotEmpty") == true),
+                            resolveDNS: $input.data('validationResolvedns'),
+                            rangeOverflowMessage: $input.data('validationRangeOverflowMessage'),
+                            rangeUnderflowMessage: $input.data('validationUnderflowOverflowMessage'),
+                        },
+                        isInputEmpty: (typeof($input.val()) === "string" ? $input.val().trim() == "" : false)
+                    };
+
+                    const [isValid, messageToShow] = await validInput(validation);
+                    let $error = $input.parent().find(`.invalid-feedback`);
+
+                    // if the error element doesn't exist then create a new one
+                    if ($error.length == 0) {
+                        $error = $(`<span class='invalid-feedback'></span>`);
+                    }
+
+                    // display the errors and color the input box
+                    if (!isValid) {
+                        $input.addClass('is-invalid');
+                        $input.parent().append($error);
+                        $error.text(messageToShow);
+                    }
+                    else {
+                        // clean the validation message and remove the error
+                        $input.removeClass('is-invalid');
+                        $error.fadeOut(500, function () { $(this).remove(); });
+                    }
+                }
+
+                $(this).off('input').on('input', function (e) {
+
+                    self.currentState = self.createFormSnapshot();
+
+                    // if exists already a Timeout then clear it
+                    if (timeoutId != -1) clearTimeout(timeoutId);
+
+                    if (!$input.attr("formnovalidate")) {
+                        // trigger input validation after 300msec
+                        timeoutId = setTimeout(() => {
+                            checkValidation();
+                            // trigger form validation to enable the submit button
+                            self.toggleFormSubmission();
+                        }, 300);
+                        // the user has changed the input, we can abort the first close attempt
+                        self.firstCloseAttempt = false;
+                    }
                 });
 
-                $(this).off('invalid').on('invalid', function(e) {
-
+                $(this).off('invalid').on('invalid', function (e) {
                     e.preventDefault();
-                    if (!$input.attr("formnovalidate"))
-                        checkValidation(true);
+                    if (!$input.attr("formnovalidate")) {
+                        checkValidation();
+                    }
                 });
-
             });
+
+        }
+
+        getModalID() {
+            return $(this.element).parents('.modal').attr('id');
+        }
+
+        toggleFormSubmission() {
+
+            let isValid = true;
+
+            // if each input is marked as valid then enable the form submit button
+            $(this.element).find('input:not(:disabled),select:not(:disabled),textarea:not(:disabled)').each(function (idx, input) {
+                // make a concatenate & between valid flags
+                isValid &= input.validity.valid;
+            });
+
+            isValid
+                ? $(this.element).find(`[type='submit'],[type='test']`).removeAttr("disabled")
+                : $(this.element).find(`[type='submit'],[type='test']`).attr("disabled", "disabled");
         }
 
         cleanForm() {
-            /* remove validation fields */
-            $(this.element).find('input,textarea,select').each(function(i, input) {
+            /* remove validation class from fields */
+            $(this.element).find('input,textarea,select').each(function (i, input) {
                 $(this).removeClass(`is-valid`).removeClass(`is-invalid`);
             });
             /* reset all the values */
@@ -129,8 +357,9 @@
 
         makeRequest() {
 
+            const $feedbackLabel = $(this.element).find(`.invalid-feedback`);
             const submitButton = $(this.element).find(`[type='submit']`);
-            let dataToSend = this.options.beforeSumbit();
+            let dataToSend = this.options.beforeSumbit(this.data);
 
             dataToSend.csrf = this.csrf;
             dataToSend = $.extend(dataToSend, this.options.submitOptions);
@@ -154,19 +383,33 @@
                 request = $.get(this.options.endpoint, dataToSend);
             }
 
+            this.isSubmitting = true;
+
             request.done(function (response, textStatus) {
+
+                // clear submitting state
+                self.isSubmitting = false;
+                // clear the current form state
+                self.currentState = null;
+
                 if (self.options.resetAfterSubmit) self.cleanForm();
+                $feedbackLabel.hide();
+
                 self.options.onSubmitSuccess(response, dataToSend, self);
+
                 /* unbind the old closure on submit event and bind a new one */
                 $(self.element).off('submit', self.submitHandler);
                 self.delegateSubmit();
-
-                /* Allow the form to be closed */
-                if (!self.dontDisableSubmit)
-                    aysResetForm(self.form_sel);
             })
             .fail(function (jqxhr, textStatus, errorThrown) {
-                self.options.onSubmitError(dataToSend, textStatus, errorThrown);
+
+                self.isSubmitting = false;
+                const response = jqxhr.responseJSON;
+                if (response.rc !== undefined && response.rc < 0) {
+                    $feedbackLabel.html(i18n.rest[response.rc_str]).show();
+                }
+
+                self.options.onSubmitError(response, dataToSend, textStatus, errorThrown);
             })
             .always(function (d) {
                 submitButton.removeAttr("disabled");
@@ -179,14 +422,14 @@
             const resetButton = $(this.element).find(`[type='reset']`);
             if (resetButton.length == 0) return;
 
-            const defaultValues = serializeFormArray($(this.element).serializeArray());
+            const defaultValues = NtopUtils.serializeFormArray($(this.element).serializeArray());
 
-            resetButton.click(function(e) {
+            resetButton.click(function (e) {
 
                 e.preventDefault();
 
                 // reset the previous values
-                $(self.element).find('input:visible,select').each(function(i, input) {
+                $(self.element).find('input:visible,select').each(function (i, input) {
                     const key = $(input).attr('name');
                     $(input).val(defaultValues[key])
                         .removeClass('is-invalid').removeClass('is-valid');
@@ -195,19 +438,19 @@
         }
     }
 
-    $.fn.modalHandler = function(args) {
+    $.fn.modalHandler = function (args) {
 
         if (this.length != 1) throw new Error("Only a form element can by initialized!");
 
         const options = $.extend({
-            csrf:               '',
-            endpoint:           '',
-            resetAfterSubmit:   true,
+            csrf: '',
+            endpoint: '',
+            resetAfterSubmit: true,
             /* True to skip the are-you-sure check on the dialog */
-            dontDisableSubmit:  false,
+            dontDisableSubmit: false,
             /* True if the request isn't done by AJAX request */
-            isSyncRequest:      false,
-            method:             'get',
+            isSyncRequest: false,
+            method: 'get',
             /**
              * Fetch data asynchronusly from the server or
              * loads data directly from the current page.
@@ -224,7 +467,7 @@
              * }
              * ```
              */
-            loadFormData:       function() {},
+            loadFormData: function () { },
 
             /**
              * onModalInit() is invoked when the plugin has been initialized.
@@ -244,9 +487,9 @@
              * }
              * ```
              */
-            onModalInit:        function(loadedData) {},
+            onModalInit: function (loadedData) { },
 
-            onModalShow:        function() {},
+            onModalShow: function () { },
 
             /**
              * The function beforeSubmit() is invoked after the user
@@ -265,7 +508,7 @@
              * }
              * ```
              */
-            beforeSumbit:       function() { return {} },
+            beforeSumbit: function () { return {} },
 
             /**
              * This function is invoked when the request to the endpoint
@@ -285,7 +528,7 @@
              * }
              * ```
              */
-            onSubmitSuccess:    function(response) {},
+            onSubmitSuccess: function (response) { },
 
             /**
              * This function is invoked when the request to the endpoint
@@ -307,7 +550,7 @@
              * }
              * ```
              */
-            onSubmitError:      function(sent, textStatus, errorThrown) {},
+            onSubmitError: function (sent, textStatus, errorThrown) { },
 
             /**
              * This function is invoked when the user click the reset input
@@ -325,7 +568,7 @@
              * }
              * ```
              */
-            onModalReset:       function(defaultData) {},
+            onModalReset: function (defaultData) { },
         }, args);
 
         const mh = new ModalHandler(this, options);

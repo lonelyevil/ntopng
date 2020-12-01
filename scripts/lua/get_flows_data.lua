@@ -95,7 +95,7 @@ for key, value in ipairs(flows_stats) do
    flows_stats[key]["info"] = "<span data-toggle='tooltip' title='"..alt_info.."'>"..info.."</span>"
 
    if(flows_stats[key]["profile"] ~= nil) then
-      flows_stats[key]["info"] = "<span class='badge badge-primary'>"..flows_stats[key]["profile"].."</span> "..flows_stats[key]["info"]
+      flows_stats[key]["info"] = formatTrafficProfile(flows_stats[key]["profile"])..flows_stats[key]["info"]
    end
 end
 
@@ -187,14 +187,14 @@ for _key, value in ipairs(flows_stats) do -- pairsByValues(vals, funct) do
       record["column_server_rtt"] = format_utils.formatMillis(value["server_tcp_info"]["rtt"])
    end
 
-   local column_key = "<A HREF='"
+   local column_key = "<A class='btn btn-sm btn-info' HREF='"
       ..ntop.getHttpPrefix().."/lua/flow_details.lua?flow_key="..value["ntopng.key"].."&flow_hash_id="..value["hash_entry_id"]
-      .."'><span class='badge badge-info'>Info</span></A>"
+      .."'><i class='fas fa-search-plus'></i></A>"
    if(have_nedge) then
       if (value["verdict.pass"]) then
-	 column_key = column_key.." <span title='"..i18n("flow_details.drop_flow_traffic_btn").."' class='badge badge-secondary block-badge' "..(ternary(isAdministrator(), "onclick='block_flow("..value["ntopng.key"]..", "..value["hash_entry_id"]..");' style='cursor: pointer;'", "")).."><i class='fas fa-ban' /></span>"
+	 column_key = column_key.." <span id='"..value["ntopng.key"].."_"..value["hash_entry_id"].."_block' ".."title='"..i18n("flow_details.drop_flow_traffic_btn").."' class='btn btn-sm btn-secondary block-badge' "..(ternary(isAdministrator(), "onclick='block_flow("..value["ntopng.key"]..", "..value["hash_entry_id"]..");' style='cursor: pointer;'", "")).."><i class='fas fa-ban' /></span>"
       else
-	 column_key = column_key.." <span title='"..i18n("flow_details.flow_traffic_is_dropped").."' class='badge badge-danger block-badge'><i class='fas fa-ban' /></span>"
+	 column_key = column_key.." <span title='"..i18n("flow_details.flow_traffic_is_dropped").."' class='btn btn-sm btn-danger block-badge'><i class='fas fa-ban' /></span>"
       end
    end
    record["column_key"] = column_key
@@ -268,7 +268,7 @@ for _key, value in ipairs(flows_stats) do -- pairsByValues(vals, funct) do
    local column_proto_l4 = ''
    if value["alerted_status"] then
       local status_info = flow_consts.getStatusDescription(value["alerted_status"], flow2statusinfo(value))
-      column_proto_l4 = "<i class='fas fa-exclamation-triangle' style='color: #B94A48' title='"..noHtml(status_info) .."'></i> "
+      column_proto_l4 = flow_consts.getStatusIcon(status_info, value["alerted_severity"]) -- "<i class='fas fa-exclamation-triangle' style=' title='"..noHtml(status_info) .."'></i> "
    elseif value["status_map"] and value["flow.status"] ~= flow_consts.status_types.status_normal.status_key then
       local title = ''
 
@@ -308,7 +308,7 @@ for _key, value in ipairs(flows_stats) do -- pairsByValues(vals, funct) do
    if(throughput_type == "pps") then
       column_thpt = value["throughput_pps"]
    else
-      column_thpt = 8*value["throughput_bps"]
+      column_thpt = 8 * value["throughput_bps"]
    end
 
 if false then
@@ -332,7 +332,7 @@ end
    local info = value["info"]
 
    if isScoreEnabled() then
-      record["column_score"] = format_utils.formatValue(value["score"])
+      record["column_score"] = format_utils.formatValue(value.score.flow_score)
    end
 
    record["column_info"] = info

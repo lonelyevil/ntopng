@@ -128,6 +128,7 @@ extern "C" {
 #include <linux/netfilter.h> /* for NF_ACCEPT */
 #include <libnfnetlink/libnfnetlink.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
+#include <ifaddrs.h> /* SilicomHwBypass */
 #endif
 #include "json.h"
 #include <sqlite3.h>
@@ -172,13 +173,15 @@ https://translate.google.co.uk/translate?sl=auto&tl=en&u=http%3A%2F%2Fbugsfixed.
 
 #include <fstream>
 #include <map>
+#include <unordered_map>
 
-#if !defined(__clang__) && (__GNUC__ <= 4) && (__GNUC_MINOR__ < 8)
+#if !defined(__clang__) && (__GNUC__ <= 4) && (__GNUC_MINOR__ < 8) && !defined(WIN32)
 #include <cstdatomic>
 #else
 #include <atomic>
 #endif
 
+#include <utility>
 #include <set>
 #include <algorithm>
 #include <vector>
@@ -204,7 +207,6 @@ using namespace std;
 #include "MDNS.h"
 #include "AddressTree.h"
 #include "VlanAddressTree.h"
-#include "AddressList.h"
 #include "BroadcastDomains.h"
 #include "Cardinality.h"
 #include "IpAddress.h"
@@ -258,9 +260,6 @@ using namespace std;
 #include "LdapAuthenticator.h"
 #endif
 #endif
-#include "FrequentStringItems.h"
-#include "FrequentNumericItems.h"
-#include "FrequentTrafficItems.h"
 #include "HostPoolStats.h"
 #include "HostPools.h"
 #include "Fingerprint.h"
@@ -277,6 +276,7 @@ using namespace std;
 #include "FlowGrouper.h"
 #include "PacketStats.h"
 #include "EthStats.h"
+#include "SyslogStats.h"
 
 #include "LocalTrafficStats.h"
 #include "PacketDumperGeneric.h"
@@ -300,24 +300,29 @@ using namespace std;
 #ifdef HAVE_RADIUS
 #include <radcli/radcli.h>
 #endif
-
-#include "FifoQueue.h"
-#include "FifoStringsQueue.h"
-#include "FifoSerializerQueue.h"
-#include "SPSCQueue.h"
+#include "Condvar.h"
 #include "TimeseriesExporter.h"
 #include "InfluxDBTimeseriesExporter.h"
-#include "RRDTimeseriesExporter.h"
 #include "L4Stats.h"
 #include "AlertsQueue.h"
+#include "LuaEngineFunctions.h"
 #include "LuaEngine.h"
+#include "SPSCQueue.h"
 #include "LuaReusableEngine.h"
 #include "AlertCheckLuaEngine.h"
 #include "FlowAlertCheckLuaEngine.h"
 #include "SyslogLuaEngine.h"
+#include "FifoQueue.h"
+#include "FifoStringsQueue.h"
+#include "FifoSerializerQueue.h"
+#include "RRDTimeseriesExporter.h"
+#include "RecipientQueues.h"
+#include "Recipients.h"
 #ifdef NTOPNG_PRO
 #include "PeriodicityStats.h"
 #include "PeriodicityHash.h"
+#include "ServiceMap.h"
+#include "PeriodicityMap.h"
 #endif
 #include "NetworkInterface.h"
 #ifndef HAVE_NEDGE
@@ -327,7 +332,6 @@ using namespace std;
 #ifdef HAVE_PF_RING
 #include "PF_RINGInterface.h"
 #endif
-#include "FlowAlertCounter.h"
 #include "VirtualHost.h"
 #include "VirtualHostHash.h"
 #include "HTTPstats.h"
@@ -340,6 +344,7 @@ using namespace std;
 #include "TextDump.h"
 #include "NIndexFlowDB.h"
 #endif
+#include "FrequentStringItems.h"
 #ifdef NTOPNG_PRO
 #include "NtopPro.h"
 #include "DnsHostMapping.h"
@@ -350,10 +355,9 @@ using namespace std;
 #include "BatchedMySQLDBEntry.h"
 #endif
 #include "LuaHandler.h"
-#include "FrequentStringItems.h"
-#include "FrequentNumericItems.h"
-#include "FrequentTrafficItems.h"
 #ifdef HAVE_NEDGE
+#include "HwBypass.h"
+#include "SilicomHwBypass.h"
 #include "NetfilterInterface.h"
 #endif
 #endif
@@ -380,13 +384,10 @@ using namespace std;
 #include "HostStats.h"
 #include "LocalHostStats.h"
 #include "HostScore.h"
-#ifdef NTOPNG_PRO
-#include "L7ProtoBehaviourAnalysis.h"
-#include "HostBehaviourAnalysis.h"
-#endif
 #include "Host.h"
 #include "LocalHost.h"
 #include "RemoteHost.h"
+#include "IEC104Stats.h"
 #include "Flow.h"
 #include "FlowHash.h"
 #include "MacHash.h"

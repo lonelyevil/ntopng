@@ -87,14 +87,17 @@ const generate_checkbox_enabled = (id, enabled, callback) => {
  */
 const generate_multi_select = (params, has_container = true) => {
 
-   const $select = $(`<select id='multiple-select' multiple class='form-control'></select>`);
+   const $select = $(`<select id='multiple-select' style="height: 10rem" multiple class='form-control'></select>`);
 
    // add groups and items
    if (params.groups.length == 1) {
+
       params.groups[0].elements.forEach((element) => {
          $select.append($(`<option value='${element[0]}'>${element[1]}</option>`))
       });
-   } else {
+   }
+   else {
+
       params.groups.forEach((category) => {
 
          const $group = $(`<optgroup label='${category.label}'></optgroup>`);
@@ -117,7 +120,7 @@ const generate_multi_select = (params, has_container = true) => {
 
    if (has_container) {
       return $(`
-         <div class='form-group mt-3'>
+         <div class='form-group ${(params.containerCss || "mt-3")}'>
             <label>${params.label || 'Default Label'}</label>
          </div>
       `).append($select);
@@ -328,7 +331,7 @@ const apply_edits_script = (template_data, script_subdir, script_key) => {
    })
       .done((d, status, xhr) => {
 
-         if (check_status_code(xhr.status, xhr.statusText, $error_label)) return;
+         if (NtopUtils.check_status_code(xhr.status, xhr.statusText, $error_label)) return;
 
          if (!d.success) {
 
@@ -342,7 +345,7 @@ const apply_edits_script = (template_data, script_subdir, script_key) => {
       })
       .fail(({ status, statusText }) => {
 
-         check_status_code(status, statusText, $error_label);
+         NtopUtils.check_status_code(status, statusText, $error_label);
 
          if (status == 200) {
             $error_label.text(`${i18n.expired_csrf}`).show();
@@ -363,7 +366,7 @@ const reset_script_defaults = (script_key, script_subdir, callback_reset) => {
       .done((reset_data, status, xhr) => {
 
          // if there is an error about the http request
-         if (check_status_code(xhr.status, xhr.statusText, $error_label)) return;
+         if (NtopUtils.check_status_code(xhr.status, xhr.statusText, $error_label)) return;
 
          // call callback function to reset fields
          callback_reset(reset_data);
@@ -373,7 +376,7 @@ const reset_script_defaults = (script_key, script_subdir, callback_reset) => {
       })
       .fail(({ status, statusText }) => {
 
-         check_status_code(status, statusText, $error_label);
+         NtopUtils.check_status_code(status, statusText, $error_label);
          // hide modal if there is error
          $("#modal-script").modal("toggle");
       })
@@ -610,7 +613,7 @@ const ItemsList = (gui, hooks, script_subdir, script_key) => {
    const $table_editor = $("#script-config-editor");
 
    const render_template = () => {
-
+      const enabled = hooks.all ? hooks.all.enabled : hooks.min.enabled
       const $component_container = $(`<tr></tr>`);
       const callback_checkbox = function (e) {
 
@@ -626,19 +629,18 @@ const ItemsList = (gui, hooks, script_subdir, script_key) => {
       };
 
       const $checkbox_enabled = generate_checkbox_enabled(
-         'itemslist-checkbox', hooks.all.enabled, callback_checkbox
+         'itemslist-checkbox', enabled, callback_checkbox
       );
 
-      const items_list = hooks.all.script_conf.items || [];
-      const $text_area = $(`
+      const items_list = hooks.all ? hooks.all.script_conf.items : (hooks.min.script_conf.items || []);      const $text_area = $(`
          <td>
             <div class='form-group template w-100'>
                <textarea
-                  ${!hooks.all.enabled ? "readonly" : ""}
+                  ${!enabled ? "readonly" : ""}
                   name='items-list'
                   id='itemslist-textarea'
                   class="w-100 form-control"
-                  style="height: 5rem;">${items_list.length > 0 ? items_list.join(',') : ''}</textarea>
+                  rows='10'>${items_list.length > 0 ? items_list.join(',') : ''}</textarea>
                   <small>${gui.input_description || i18n.blacklisted_country}</small>
                <div class="invalid-feedback"></div>
             </div>
@@ -655,27 +657,13 @@ const ItemsList = (gui, hooks, script_subdir, script_key) => {
 
    const apply_event = (event) => {
 
-      const special_char_regexp = /[\@\#\<\>\\\/\?\'\"\`\~\|\:\;\!\&\*\(\)\{\}\[\]\_\-\+\=\%\$\^]/g;
       const hook_enabled = $('#itemslist-checkbox').prop('checked');
-
-      let $error_label = $('#itemslist-textarea').parent().find('.invalid-feedback');
-      $error_label.fadeOut();
-
       const textarea_value = $('#itemslist-textarea').val().trim();
 
-      // if the textarea value contains special characters such as #, @, ... then alert the user
-      if (special_char_regexp.test(textarea_value)) {
-         $error_label.fadeIn().text(`${i18n.items_list_comma}`);
-         return;
-      }
-
-      // hide label
-      $error_label.hide();
-
       const items_list = textarea_value ? textarea_value.split(',').map(x => x.trim()) : [];
-
+      const hook = (hooks.all === undefined) ? "min" : "all"; 
       const template_data = {
-         all: {
+         [hook]: {
             enabled: hook_enabled,
             script_conf: {
                items: items_list
@@ -693,7 +681,7 @@ const ItemsList = (gui, hooks, script_subdir, script_key) => {
       reset_script_defaults(script_key, script_subdir, (reset_data) => {
 
          const items_list = reset_data.hooks.all.script_conf.items;
-         const enabled = reset_data.hooks.all.enabled;
+         const enabled = reset_data.hooks.all ? reset_data.hooks.all.enabled : reset_data.hooks.min.enabled;
 
          // set textarea value with default's one
          $('#itemslist-textarea').val(items_list.join(','));
@@ -1113,55 +1101,44 @@ const ElephantFlows = (gui, hooks, script_subdir, script_key) => {
 
 /* ******************************************************* */
 
-const FlowMud = (gui, hooks, script_subdir, script_key) => {
+const MultiSelect = (gui, hooks, script_subdir, script_key) => {
 
    const $table_editor = $("#script-config-editor");
    $("#script-config-editor").empty();
 
    const render_template = () => {
-      const enabled = hooks.all.enabled;
-      const items_list = (hooks.all.script_conf ? hooks.all.script_conf.device_types : null) || [];
-      const max_recording = (hooks.all.script_conf ? hooks.all.script_conf.max_recording : null) || 3600;
 
-      const $multiselect_ds = generate_multi_select({
+      const enabled = hooks.all.enabled;
+      const items_list = hooks.all.script_conf.items || [];
+      // create textarea to append
+      const $multiselect = generate_multi_select({
          enabled: enabled,
          name: 'item_list',
+         label: gui.i8n_multiselect_label,
+         containerCss: 'm-0',
          selected_values: items_list,
-         groups: device_types
-      }, false /* no container */);
-
-      const $max_recording = generate_single_select({
-         enabled: enabled,
-         label: i18n.scripts_list.templates.max_mud_recording,
-         name: 'max_recording',
-         current_value: max_recording,
-         elements: mud_max_recording,
+         groups: gui.groups
       });
 
-
       const $checkbox_enabled = generate_checkbox_enabled(
-         'mud-checkbox', enabled, function (e) {
+         'multiselect-checkbox', enabled, function (e) {
+
             const checked = $(this).prop('checked');
-
-            if (!checked) {
-               $multiselect_ds.attr("disabled", "");
-               $max_recording.find('select').attr("disabled", "");
-            } else {
-               $multiselect_ds.removeAttr("disabled");
-               $max_recording.find('select').removeAttr("disabled");
-            }
-
+            // if the checked option is false the disable the elements
+            (!checked)
+               ? $multiselect.find('select').attr("disabled", "")
+               : $multiselect.find('select').removeAttr("disabled");
          }
       );
 
+      // append elements on table
+      const $input_container = $(`<td></td>`);
+      $input_container.append($multiselect);
+
+      // initialize table row
       const $container = $(`<tr></tr>`).append(
          $(`<td class='text-center'></td>`).append($checkbox_enabled),
-         $(`<td></td>`).append(
-            $(`<div class='form-group'>
-               <label>${i18n.scripts_list.templates.mud_enabled_devices}:</label>
-            </div>`).append($multiselect_ds),
-            $max_recording
-         )
+         $input_container
       );
 
       $table_editor.append(`<tr class='text-center'><th>${i18n.enabled}</th></tr>`);
@@ -1172,43 +1149,31 @@ const FlowMud = (gui, hooks, script_subdir, script_key) => {
 
    const apply_event = (event) => {
 
-      const hook_enabled = $('#mud-checkbox').prop('checked');
+      const hook_enabled = $('#multiselect-checkbox').prop('checked');
       const items_list = $(`select[name='item_list']`).val();
-      const max_recording = parseInt($(`select[name='max_recording']`).val());
 
       const template_data = {
          all: {
             enabled: hook_enabled,
             script_conf: {
-               device_types: items_list,
-               max_recording: max_recording,
+               items: items_list,
             }
          }
       }
 
-      // make post request to save data
       apply_edits_script(template_data, script_subdir, script_key);
    }
 
    const reset_event = (event) => {
-      reset_script_defaults(script_key, script_subdir, (reset_data) => {
-         const max_recording = reset_data.hooks.all.script_conf.max_recording || 3600;
-         const items_list = reset_data.hooks.all.script_conf.device_types || [];
-         const enabled = reset_data.hooks.all.enabled;
+      reset_script_defaults(script_key, script_subdir, (data_reset) => {
 
-         // set textarea value with default's one
-         $(`select[name='item_list']`).val(items_list.join(','));
-         $('#mud-checkbox').prop('checked', enabled);
-         $(`select[name='max_recording']`).val(max_recording);
+         // reset textarea content
+         const items_list = data_reset.hooks.all.script_conf.items || [];
+         $(`select[name='item_list']`).val(items_list);
 
-         if (!enabled) {
-            $(`select[name='item_list']`).attr('disabled', '');
-            $(`select[name='max_recording']`).attr('disabled', '');
-         } else {
-            $(`select[name='item_list']`).removeAttr('disabled', '');
-            $(`select[name='max_recording']`).removeAttr('disabled', '');
-         }
-      })
+         const enabled = data_reset.hooks.all.enabled || false;
+         $('#multiselect-checkbox').prop('checked', enabled);
+      });
    }
 
    return {
@@ -1216,15 +1181,26 @@ const FlowMud = (gui, hooks, script_subdir, script_key) => {
       reset_click_event: reset_event,
       render: render_template,
    }
-};
+}
 
 /* ******************************************************* */
 
 const EmptyTemplate = (gui = null, hooks = null, script_subdir = null, script_key = null) => {
+
+   const $tableEditor = $("#script-config-editor");
+
    return {
       apply_click_event: function () { },
       reset_click_event: function () { },
-      render: function () { },
+      render: function () {
+
+         // add an info alert to inform the user about the problem
+         const $alert = $("<div class='alert alert-info'></div>");
+         $alert.html(i18n.scripts_list.templates.template_not_implemented);
+         $tableEditor.append($alert);
+         // hide the apply and the reset button because there are no inputs to fill
+         $(`#btn-apply,#btn-reset`).hide();
+      },
    }
 }
 
@@ -1255,7 +1231,7 @@ const initScriptConfModal = (script_key, script_title, script_desc) => {
       .then((data, status, xhr) => {
 
          // check status code
-         if (check_status_code(xhr.status, xhr.statusText, null)) return;
+         if (NtopUtils.check_status_code(xhr.status, xhr.statusText, null)) return;
 
          // hide previous error
          $("#apply-error").hide();
@@ -1274,7 +1250,7 @@ const initScriptConfModal = (script_key, script_title, script_desc) => {
       })
       .fail(({ status, statusText }) => {
 
-         check_status_code(status, statusText, null);
+         NtopUtils.check_status_code(status, statusText, null);
          // hide modal if there is error
          $("#modal-script").modal("toggle");
       })
@@ -1304,15 +1280,29 @@ const TemplateBuilder = ({ gui, hooks }, script_subdir, script_key) => {
       items_list: ItemsList(gui, hooks, script_subdir, script_key),
       long_lived: LongLived(gui, hooks, script_subdir, script_key),
       elephant_flows: ElephantFlows(gui, hooks, script_subdir, script_key),
-      flow_mud: FlowMud(gui, hooks, script_subdir, script_key),
+      multi_select: MultiSelect(gui, hooks, script_subdir, script_key)
    }
 
    let template_chosen = templates[template_name];
-
    if (!template_chosen) {
       template_chosen = EmptyTemplate();
-      throw (`${i18n.scripts_list.templates.template_not_implemented}`);
+      // this message is for the developers
+      console.warn("The chosen template doesn't exist yet. See the avaible templates.")
    }
+
+   // check if the script has an action button
+   const hasActionButton = gui.input_action_i18n !== undefined && gui.input_action_url !== undefined;
+   if (hasActionButton) {
+      $(`.action-button-container`).show();
+      delegateActionButton(gui);
+   }
+   else {
+      $(`.action-button-container`).hide();
+      $(`#action-error`).hide();
+   }
+
+   // restore Apply/Reset button
+   $(`#btn-apply,#btn-reset`).show();
 
    return template_chosen;
 }
@@ -1321,27 +1311,32 @@ const TemplateBuilder = ({ gui, hooks }, script_subdir, script_key) => {
 
 // End templates and template builder
 
-const create_enabled_button = (row_data) => {
+const createScriptStatusButton = (row_data) => {
 
    const { is_enabled } = row_data;
 
-   const $button = $(`<button type='button' class='btn'></button>`);
+   const $button = $(`<button type='button' class='btn btn-sm'></button>`);
+   $button.addClass('btn-success');
 
-   if (!is_enabled) {
-
-      const has_all_hook = row_data.all_hooks.find(e => e.key == 'all');
-
-      if (!has_all_hook && hasConfigDialog(row_data)) $button.css('visibility', 'hidden');
-
+   if (!is_enabled && row_data.input_handler) {
       $button.html(`<i class='fas fa-toggle-on'></i>`);
-      $button.addClass('btn-success');
+      $button.attr('data-target', '#modal-script');
+      $button.attr('data-toggle', 'modal');
+      return $button;
+   }
+
+   if (!is_enabled && !row_data.input_handler) {
+      $button.html(`<i class='fas fa-toggle-on'></i>`);
    }
    else {
 
-      if (row_data.enabled_hooks.length < 1) $button.css('visibility', 'hidden');
-
       $button.html(`<i class='fas fa-toggle-off'></i>`);
       $button.addClass('btn-danger');
+
+      if (row_data.enabled_hooks.length < 1) {
+         $button.addClass('disabled');
+         return $button;
+      }
    }
 
    $button.off('click').on('click', function () {
@@ -1353,31 +1348,88 @@ const create_enabled_button = (row_data) => {
          action: (is_enabled) ? 'disable' : 'enable',
          confset_id: confset_id
       })
-         .done((d, status, xhr) => {
+      .done((d, status, xhr) => {
 
-            if (!d.success) {
-               $("#alert-row-buttons").text(d.error).removeClass('d-none').show();
-            }
+         if (!d.success) {
+            $("#alert-row-buttons").text(d.error).removeClass('d-none').show();
+         }
 
-            if (d.success) reloadPageAfterPOST();
-
-         })
-         .fail(({ status, statusText }) => {
-
-            check_status_code(status, statusText, $("#alert-row-buttons"));
-
-            // if the csrf has expired
-            if (status == 200) {
-               $("#alert-row-buttons").text(`${i18n.expired_csrf}`).removeClass('d-none').show();
-            }
-
-            // re eanble buttons
-            $button.removeAttr("disabled").removeClass('disabled');
-         });
+         if (d.success) reloadPageAfterPOST();
+      })
+      .fail(({status, statusText}) => {
+         NtopUtils.check_status_code(status, statusText, $("#alert-row-buttons"));
+      })
+      .always(() => {
+         $button.removeAttr("disabled").removeClass('disabled');
+      })
    })
 
    return $button;
 };
+
+function delegateActionButton(gui) {
+
+   const $button = $(`#btn-action`);
+   $button.text(gui.input_action_i18n);
+   $button.off('click').click(function (e) {
+
+      e.preventDefault();
+
+      if (gui.input_action_confirm && !window.confirm(gui.input_action_i18n_confirm)) {
+         return;
+      }
+
+      $button.attr("disabled", "disabled");
+      const $alert = $(`#action-error`);
+      $alert.hide();
+
+      const req = $.post(`${http_prefix}/${gui.input_action_url}`, {csrf: pageCsrf});
+      req.then(function ({rc, rc_str}) {
+         
+         // if the return code is zero then everything went alright
+         if (rc == 0) {
+            $alert.removeClass('alert-danger').addClass('alert-success').html(i18n.rest[rc_str]).show().fadeOut(3000);
+            return;
+         }
+         // otherwise show an error!
+         $alert.removeClass('alert-success').addClass('alert-danger').html(i18n.rest[rc_str]).show();
+      });
+      req.fail(function (jqXHR) {
+         if (jqXHR.status == 404) {
+            NtopUtils.check_status_code(jqXHR.status, jqXHR.statusText, $alert);
+            return;
+         }
+         const {rc_str} = jqXHR.responseJSON;
+         $alert.removeClass('alert-success').addClass('alert-danger').html(i18n.rest[rc_str]).show();
+      });
+      req.always(function() {
+         $button.removeAttr("disabled");
+      });
+   });
+}
+
+function delegateTooltips() {
+   $(`span[data-toggle='popover']`).popover({
+      trigger: 'manual',
+      html: true,
+      animation: false,
+  })
+  .on('mouseenter', function () {
+      let self = this;
+      $(this).popover("show");
+      $(".popover").on('mouseleave', function () {
+          $(self).popover('hide');
+      });
+  })
+  .on('mouseleave', function () {
+      let self = this;
+      setTimeout(function () {
+          if (!$('.popover:hover').length) {
+              $(self).popover('hide');
+          }
+      }, 50);
+  });
+}
 
 $(document).ready(function () {
 
@@ -1520,9 +1572,8 @@ $(document).ready(function () {
          }
 
          const [enabled_count, disabled_count] = count_scripts();
-
-         // select the correct tab
-         select_script_filter(enabled_count);
+         // enable the disable all button if there are more than one enabled scripts
+         if (enabled_count > 0) $(`#btn-disable-all`).removeAttr('disabled');
 
          // clean searchbox
          $(".dataTables_filter").find("input[type='search']").val('').trigger('keyup');
@@ -1533,7 +1584,11 @@ $(document).ready(function () {
             hide_categories_dropdown();
          });
 
+         delegateTooltips();
+
          // update the tabs counters
+         const INDEX_SEARCH_COLUMN = 3;
+
          const $disabled_button = $(`#disabled-scripts`);
          const $all_button = $("#all-scripts");
          const $enabled_button = $(`#enabled-scripts`);
@@ -1541,6 +1596,34 @@ $(document).ready(function () {
          $all_button.html(`${i18n.all} (${enabled_count + disabled_count})`)
          $enabled_button.html(`${i18n.enabled} (${enabled_count})`);
          $disabled_button.html(`${i18n.disabled} (${disabled_count})`);
+
+         const filterButonEvent = ($button, searchValue, tab) => {
+            $('.filter-scripts-button').removeClass('active');
+            $button.addClass('active');
+            this.DataTable().columns(INDEX_SEARCH_COLUMN).search(searchValue).draw();
+            window.history.replaceState(undefined, undefined, tab);
+            delegateTooltips();
+         }
+
+         $all_button.click(function() {
+            filterButonEvent($(this), "", "#all");
+         });
+         $enabled_button.click(function() {
+            filterButonEvent($(this), "true", "#enabled");
+         });
+         $disabled_button.click(function() {
+            filterButonEvent($(this), "false", "#disabled");
+         });
+
+         // select the correct tab
+         select_script_filter(enabled_count);
+
+         if (script_search_filter) {
+            this.DataTable().columns(INDEX_SEARCH_COLUMN).search("").draw(true);
+            this.DataTable().search(script_search_filter).draw(true);
+            // disable the search box
+            $(`#scripts-config_filter input[type='search']`).attr("readonly", "");
+         }
 
          if (script_key_filter) {
             let elem = json.filter((x) => { return (x.key == script_key_filter); })[0];
@@ -1558,29 +1641,32 @@ $(document).ready(function () {
          }
       },
       order: [[0, "asc"]],
-      buttons: [
-         {
-            extend: "filterScripts",
-            attr: {
-               id: "all-scripts",
-            },
-            text: "All"
-         },
-         {
-            extend: "filterScripts",
-            attr: {
-               id: "enabled-scripts"
-            },
-            text: "Enabled"
-         },
-         {
-            extend: "filterScripts",
-            attr: {
-               id: "disabled-scripts"
-            },
-            text: "Disabled"
+      buttons: {
+         buttons: [
+             {
+                 text: '<i class="fas fa-sync"></i>',
+                 className: 'btn-link',
+                 action: function (e, dt, node, config) {
+                     $script_table.ajax.reload(function() {
+                        const [enabled_count, disabled_count] = count_scripts();
+                        // enable the disable all button if there are more than one enabled scripts
+                        if (enabled_count > 0) $(`#btn-disable-all`).removeAttr('disabled');
+                        $("#all-scripts").html(`${i18n.all} (${enabled_count + disabled_count})`)
+                        $(`#enabled-scripts`).html(`${i18n.enabled} (${enabled_count})`);
+                        $(`#disabled-scripts`).html(`${i18n.disabled} (${disabled_count})`);
+                     }, false);
+                 }
+             }
+         ],
+         dom: {
+             button: {
+                 className: 'btn btn-link'
+             },
+             container: {
+                 className: 'border-left ml-1 float-right'
+             }
          }
-      ],
+     },
       columns: [
          {
             data: 'title',
@@ -1611,7 +1697,7 @@ $(document).ready(function () {
                            ${data.length >= 72 ? `data-toggle='popover'  data-placement='top' data-html='true'` : ``}
                            title="${row.title}"
                            data-content="${data}" >
-                              ${truncate_string(data, 72, true)}
+                              ${truncate_string(data, 120, true)}
                            </span>`;
                }
 
@@ -1646,35 +1732,24 @@ $(document).ready(function () {
             data: null,
             name: 'actions',
             className: 'text-center',
-            width: '200px',
             sortable: false,
-            render: function (data, type, row) {
+            width: 'auto',
+            render: function (data, type, script) {
 
-               const edit_script_btn = `
-                      <a href='#'
-                         title='${i18n.edit_script}'
-                         class='btn btn-info'
-                         style="visibility: ${!row.input_handler ? 'hidden' : 'visible'}"
-                         data-toggle="modal"
-                         data-target="#modal-script">
-                           <i class='fas fa-edit'></i>
-                     </a>
-               `;
-               const edit_url_btn = `
-                      <a href='${data.edit_url}'
-                        class='btn btn-secondary'
-                        style="visibility: ${!data.edit_url ? 'hidden' : 'visible'}"
-                        title='${i18n.view_src_script}'>
-                           <i class='fas fa-file-code'></i>
-                      </a>
-               `;
+               const isScriptEnabled = script.is_enabled;
 
-               return `<div class='btn-group btn-group-sm'>${edit_script_btn}${edit_url_btn}</div>`;
+               const srcCodeButtonEnabled = data.edit_url && isScriptEnabled ? '' : 'disabled';
+               const editScriptButtonEnabled = !script.input_handler || !isScriptEnabled ? 'disabled' : '';
+
+               return DataTableUtils.createActionButtons([
+                  { class: `btn-info ${editScriptButtonEnabled}`, modal: '#modal-script', icon: 'fa-edit' },
+                  { class: `btn-secondary ${srcCodeButtonEnabled}`, icon: 'fa-file-code', href: data.edit_url}
+               ]);
             },
             createdCell: function (td, cellData, row) {
 
-               const enabled_button = create_enabled_button(row);
-               $(td).find('.btn-group').prepend(enabled_button);
+               const $enableButton = createScriptStatusButton(row);
+               $(td).find('div').prepend($enableButton);
             }
          }
       ]
@@ -1705,7 +1780,7 @@ $(document).ready(function () {
       });
 
    // load templates for the script
-   $('#scripts-config').on('click', 'a[data-target="#modal-script"]', function (e) {
+   $('#scripts-config').on('click', '[href="#modal-script"],[data-target="#modal-script"]', function (e) {
 
       const row_data = $script_table.row($(this).parent().parent()).data();
       const script_key = row_data.key;
@@ -1742,5 +1817,25 @@ $(document).ready(function () {
          $(this).attr('href', `${$(this).attr('href')}&referal_url=${encoded}`);
       });
    });
+
+   $(`#disable-all-modal #btn-confirm-action`).click(async function() {
+
+      $(this).attr("disabled", "disabled");
+      $.post(`${http_prefix}/lua/toggle_all_user_scripts.lua`, {
+         action: 'disable',
+         script_subdir: script_subdir,
+         confset_id: confset_id,
+         csrf: pageCsrf
+      })
+      .then((result) => {
+         if (result.success) location.reload();
+      })
+      .catch((error) => {
+         console.error(error);
+      })
+      .always(() => {
+         $(`#btn-disable-all`).removeAttr("disabled");
+      })
+   })
 
 });

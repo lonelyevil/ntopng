@@ -28,10 +28,6 @@ local function printUserScripts()
 
             -- Hooks
             for hook in pairsByKeys(script.hooks) do
-              if((hook == "periodicUpdate") and (script.periodic_update_seconds ~= nil)) then
-                hook = string.format("%s (%us)", hook, script.periodic_update_seconds)
-              end
-
               hooks[#hooks + 1] = hook
             end
             hooks = table.concat(hooks, ", ")
@@ -65,7 +61,7 @@ local function printUserScripts()
             local edit_url = user_scripts.getScriptEditorUrl(script)
 
             if(edit_url) then
-              edit_url = ' <a title="'.. i18n("plugins_overview.action_view") ..'" href="'.. edit_url ..'" class="badge badge-secondary" style="visibility: visible">' .. i18n("host_pools.view") ..'</a>'
+              edit_url = ' <a title="'.. i18n("plugins_overview.action_view") ..'" href="'.. edit_url ..'" class="btn btn-sm btn-secondary" ><i class="fas fa-eye"></i></a>'
             end
 
             print(string.format(([[
@@ -88,7 +84,6 @@ end
 dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
 
 print([[
-    <div class='container-fluid'>
         <div class='row'>
             <div class='col-12'>]])
 
@@ -113,7 +108,6 @@ print([[
 print([[
                     </tbody>
                 </table>
-            </div>
         </div>
     </div>
     <link href="]].. ntop.getHttpPrefix() ..[[/datatables/datatables.min.css" rel="stylesheet"/>

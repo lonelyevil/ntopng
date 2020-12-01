@@ -34,6 +34,7 @@ pfring *PF_RINGInterface::pfringSocketInit(const char *name) {
   pfring *handle;
   packet_direction direction;
   u_int32_t version;
+  int rc;
 
   flags |= PF_RING_LONG_HEADER;
   flags |= PF_RING_DNA_SYMMETRIC_RSS;  /* Note that symmetric RSS is ignored by non-DNA drivers */
@@ -49,7 +50,22 @@ pfring *PF_RINGInterface::pfringSocketInit(const char *name) {
   if((handle = pfring_open(name, ntop->getGlobals()->getSnaplen(name), flags)) == NULL)
     return NULL;
 
-  pfring_version(handle, &version);
+  rc = pfring_version(handle, &version);
+
+  rc = pfring_version(handle, &version);
+
+  if (rc == -1) {
+    ntop->getTrace()->traceEvent(TRACE_ERROR, "Unexpected socket error: unable to read PF_RING version");
+    exit(0);
+  }
+
+  if (version != RING_VERSION_NUM) {
+    ntop->getTrace()->traceEvent(TRACE_ERROR, "PF_RING version mismatch (expected v.%d.%d.%d found v.%d.%d.%d)",
+      (RING_VERSION_NUM & 0xFFFF0000) >> 16, (RING_VERSION_NUM & 0x0000FF00) >> 8, RING_VERSION_NUM & 0x000000FF,
+      (version & 0xFFFF0000) >> 16, (version & 0x0000FF00) >> 8, version & 0x000000FF); 
+    exit(0);
+  }
+
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "Reading packets from PF_RING v.%d.%d.%d interface %s...",
 			       (version & 0xFFFF0000) >> 16, (version & 0x0000FF00) >> 8, version & 0x000000FF,
 			       name);
@@ -62,6 +78,7 @@ pfring *PF_RINGInterface::pfringSocketInit(const char *name) {
   case PCAP_D_INOUT: direction = rx_and_tx_direction; break;
   case PCAP_D_IN:    direction = rx_only_direction;   break;
   case PCAP_D_OUT:   direction = tx_only_direction;   break;
+  default:           direction = rx_and_tx_direction; break;
   }
 
   if(pfring_set_direction(handle, direction) != 0) {
@@ -203,8 +220,7 @@ void PF_RINGInterface::multiPacketPollLoop() {
 
         if(hdr.ts.tv_sec == 0) gettimeofday(&hdr.ts, NULL);
 	dissectPacket(DUMMY_BRIDGE_INTERFACE_ID,
-		      (hdr.extended_hdr.rx_direction == 1) ? 
-		      true /* ingress */ : false /* egress */,
+		      (idx == 0) /* Assuming 0 ingress, 1 egress (TAP) */,
 		      NULL, (const struct pcap_pkthdr *) &hdr, buffer,
 		      &p, &srcHost, &dstHost, &flow);
 	sleep_time = step_sleep;

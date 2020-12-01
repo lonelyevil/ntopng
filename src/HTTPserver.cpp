@@ -144,7 +144,12 @@ void HTTPserver::traceLogin(const char *user, bool authorized) {
 // Generate session ID. buf must be 33 bytes in size.
 // Note that it is easy to steal session cookies by sniffing traffic.
 // This is why all communication must be SSL-ed.
-static void generate_session_id(char *buf, const char *random, const char *user, const char *group) {
+static void generate_session_id(char *buf, const char *user, const char *group) {
+  char random[64];
+
+  srand((int)time(0));
+  snprintf(random, sizeof(random), "%d", rand());
+
   mg_md5(buf, random, user, group, NULL);
 }
 
@@ -156,35 +161,21 @@ static void create_session(const char * const user,
 			   bool localuser,
 			   char *session_id,
 			   u_int session_id_size,
-			   u_int *session_duration
-			   ) {
-  char key[256], random[64];
+			   u_int session_duration) {
+  char key[256];
   char csrf[NTOP_CSRF_TOKEN_LENGTH];
   char val[128];
 
-  snprintf(random, sizeof(random), "%d", rand());
-
-  generate_session_id(session_id, random, user, group);
+  generate_session_id(session_id, user, group);
   generate_csrf_token(csrf);
 
-  // ntop->getTrace()->traceEvent(TRACE_ERROR, "==> %s\t%s", random, session_id);
-
-  // do_auto_logout() is the getter for the command-line specified
-  // preference that defaults to true (i.e., auto_logout is enabled by default)
-  // If do_auto_logout() is disabled, then the runtime auto logout preference
-  // is taken into account.
-  // If do_auto_logout() is false, then the auto logout is disabled regardless
-  // of runtime preferences.
-  if(!ntop->getPrefs()->do_auto_logout() || !ntop->getPrefs()->do_auto_logout_at_runtime())
-    *session_duration = EXTENDED_HTTP_SESSION_DURATION;
-  else
-    *session_duration = ntop->getPrefs()->get_auth_session_duration();
+  // ntop->getTrace()->traceEvent(TRACE_ERROR, "==> %s", session_id);
 
   /* Save session in redis */
   snprintf(key, sizeof(key), "sessions.%s", session_id);
   snprintf(val, sizeof(val), "%s|%s|%s|%c", user, group, csrf, localuser ? '1' : '0');
 
-  ntop->getRedis()->set(key, val, *session_duration);
+  ntop->getRedis()->set(key, val, session_duration);
   ntop->getTrace()->traceEvent(TRACE_INFO, "[HTTP] Set session sessions.%s", session_id);
 
   HTTPserver::traceLogin(user, true);
@@ -199,7 +190,7 @@ static void set_session_cookie(const struct mg_connection * const conn,
 		       bool localuser,
 		       const char * const referer) {
   char session_id[64];
-  u_int session_duration = 0;
+  u_int session_duration;
 
   if(!strcmp(mg_get_request_info((struct mg_connection*)conn)->uri, "/metrics")
      || !strncmp(mg_get_request_info((struct mg_connection*)conn)->uri, LIVE_TRAFFIC_URL, strlen(LIVE_TRAFFIC_URL))
@@ -210,7 +201,18 @@ static void set_session_cookie(const struct mg_connection * const conn,
   if(HTTPserver::authorized_localhost_user_login(conn))
     return;
 
-  create_session(user, group, localuser, session_id, sizeof(session_id), &session_duration);
+  // do_auto_logout() is the getter for the command-line specified
+  // preference that defaults to true (i.e., auto_logout is enabled by default)
+  // If do_auto_logout() is disabled, then the runtime auto logout preference
+  // is taken into account.
+  // If do_auto_logout() is false, then the auto logout is disabled regardless
+  // of runtime preferences.
+  if(!ntop->getPrefs()->do_auto_logout() || !ntop->getPrefs()->do_auto_logout_at_runtime())
+    session_duration = EXTENDED_HTTP_SESSION_DURATION;
+  else
+    session_duration = ntop->getPrefs()->get_auth_session_duration();
+
+  create_session(user, group, localuser, session_id, sizeof(session_id), session_duration);
 
   /* http://en.wikipedia.org/wiki/HTTP_cookie */
   mg_printf((struct mg_connection *)conn, "HTTP/1.1 302 Found\r\n"
@@ -240,7 +242,6 @@ static int checkCaptive(const struct mg_connection *conn,
       This user logged onto ntopng via the captive portal
     */
     u_int16_t host_pool_id;
-    int32_t limited_lifetime = -1; /* Unlimited by default */
 
 #ifdef DEBUG
     char buf[32];
@@ -258,10 +259,9 @@ static int checkCaptive(const struct mg_connection *conn,
       return(0);
 
     ntop->getUserHostPool(username, &host_pool_id);
-    ntop->hasUserLimitedLifetime(username, &limited_lifetime);
 
     if(!ntop->addIPToLRUMatches(htonl((unsigned int)conn->request_info.remote_ip),
-			    host_pool_id, label, limited_lifetime, bridge_interface))
+			    host_pool_id, label, bridge_interface))
       return(0);
 
     /* Success */
@@ -463,20 +463,32 @@ static int getAuthorizedUser(struct mg_connection *conn,
   string auth_header = auth_header_p ? auth_header_p  : "";
   istringstream iss(auth_header);
   getline(iss, auth_type, ' ');
+
   if(auth_type == "Basic") {
     string decoded_auth, user_s = "", pword_s = "";
     /* In case auth type is Basic, info are encoded in base64 */
     getline(iss, auth_string, ' ');
     decoded_auth = Utils::base64_decode(auth_string);
     istringstream authss(decoded_auth);
+
     getline(authss, user_s, ':');
     getline(authss, pword_s, ':');
 
     strncpy(username, user_s.c_str(), NTOP_USERNAME_MAXLEN);
     username[NTOP_USERNAME_MAXLEN - 1] = '\0';
     return ntop->checkGuiUserPassword(conn, username, pword_s.c_str(), group, localuser);
+  } else if(auth_type == "Token") {
+    getline(iss, auth_string, ' ');
+      
+    if((ntop->getRedis()->hashGet(NTOPNG_API_TOKEN_PREFIX, auth_string.c_str(), username, username_len) < 0)
+       || (username[0] == '\0')) {
+      ntop->getTrace()->traceEvent(TRACE_INFO, "[HTTP] Unknown authorization token %s",
+				   auth_string.c_str());
+      return(0);
+    } else
+      return(1);    
   }
-
+  
   /* NOTE: this is the only cookie needed for gui authentication */
   mg_get_cookie(conn, "session", session_id, sizeof(session_id));
 
@@ -627,7 +639,7 @@ static void redirect_to_login(struct mg_connection *conn,
 
     mg_printf(conn, "HTTP/1.1 302 Found\r\n"
 	      "Expires: 0\r\n"
-	      "Cache-Control: no-store, no-cache, must-revalidate\t\n"
+	      "Cache-Control: no-store, no-cache, must-revalidate\r\n"
 	      "Pragma: no-cache\r\n"
 	      "Content-Type: text/html; charset=UTF-8\r\n"
 	      "Content-Length: %lu\r\n"
@@ -823,24 +835,51 @@ static void authorize(struct mg_connection *conn,
 
 // Used to retrieve a session cookie for third-party users via REST API
 // Note: there is no connection directly tied to this request (out of bound)
-bool HTTPserver::authorize_noconn(char *username, char *session_id, u_int session_id_size) {
+bool HTTPserver::authorize_noconn(char *username, char *session_id, u_int session_id_size, u_int session_duration) {
   char group[NTOP_GROUP_MAXLEN] = { 0 };
-  u_int session_duration = 0;
 
   /* Note: we are not checking the user password as the admin
    * or the same (authenticated) user is generating the session */
-  if (ntop->existsUserLocal(username)) {
+  if(ntop->existsUserLocal(username)) {
 
     strncpy(group, NTOP_UNKNOWN_GROUP, NTOP_GROUP_MAXLEN-1);
     group[NTOP_GROUP_MAXLEN - 1] = '\0';
     ntop->getUserGroupLocal(username, group);
 
-    create_session(username, group, true, session_id, session_id_size, &session_duration);
+    create_session(username, group, true, session_id, session_id_size, session_duration);
 
     return(true);
   }
 
   return(false);
+}
+
+
+/* ****************************************** */
+
+bool HTTPserver::create_api_token(const char *username, char *api_token, u_int api_token_size) {
+  /* Note: we are not checking the user password as the admin
+   * or the same (authenticated) user is generating the session */
+  if(ntop->existsUserLocal(username)) {
+    /*
+      Use the same random generator used for the sessions
+     */
+    generate_session_id(api_token, username, NULL);
+
+    /*
+      Set the token in the hash of all tokens
+     */
+    ntop->getRedis()->hashSet(NTOPNG_API_TOKEN_PREFIX, api_token, username);
+
+    /*
+      Set the token as a per-user attribute
+    */
+    ntop->addUserAPIToken(username, api_token);
+
+    return true;
+  }
+
+  return false;
 }
 
 /* ****************************************** */
@@ -881,6 +920,7 @@ static int handle_lua_request(struct mg_connection *conn) {
   bool localuser = false;
   char *referer = (char*)mg_get_header(conn, "Referer");
   u_int8_t whitelisted;
+  u_int8_t authorized = 0;
 
   strncpy(group, NTOP_UNKNOWN_GROUP, NTOP_GROUP_MAXLEN-1);
   group[NTOP_GROUP_MAXLEN - 1] = '\0';
@@ -895,7 +935,7 @@ static int handle_lua_request(struct mg_connection *conn) {
 
 #ifdef HAVE_NEDGE
   if(!ntop->getPro()->has_valid_license()) {
-    if (! ntop->getGlobals()->isShutdown()) {
+    if(! ntop->getGlobals()->isShutdown()) {
       ntop->getTrace()->traceEvent(TRACE_NORMAL, "License expired, shutting down...");
       ntop->getGlobals()->shutdown();
       ntop->shutdown();
@@ -960,15 +1000,15 @@ static int handle_lua_request(struct mg_connection *conn) {
         json_object *jscope, *jorigin;
 	const char *scope  = NULL, *origin = NULL;
 
-        if (json_object_object_get_ex(j, "scope", &jscope))
+        if(json_object_object_get_ex(j, "scope", &jscope))
           scope = json_object_get_string(jscope);
 
-        if (json_object_object_get_ex(j, "origin", &jorigin))
+        if(json_object_object_get_ex(j, "origin", &jorigin))
           origin = json_object_get_string(jorigin);
 	
 	if(scope != NULL && strcmp(scope, "public") != 0) {
 	  /* This is a private URL and it needs authentication */
-	  u_int8_t authorized = getAuthorizedUser(conn, request_info, username, sizeof(username), group, csrf, &localuser);
+	  authorized = getAuthorizedUser(conn, request_info, username, sizeof(username), group, csrf, &localuser);
 
 	  if(!authorized) {
 	    char referer[255];
@@ -976,9 +1016,10 @@ static int handle_lua_request(struct mg_connection *conn) {
 	    redirect_to_login(conn, request_info, make_referer(conn, referer, sizeof(referer)));
 	    return(1); /* Handled */
 	  }
-	}
+	} else
+	  authorized = 1;	
 
-        if (origin != NULL) {
+        if(origin != NULL) {
           original_uri = request_info->uri;       
 	  snprintf(tmp_uri, sizeof(tmp_uri),  "/lua/datasources/%s", origin);
         }
@@ -999,14 +1040,14 @@ static int handle_lua_request(struct mg_connection *conn) {
         json_object *jorigin;
 	const char *origin = NULL;
 
-        if (json_object_object_get_ex(j, "origin", &jorigin))
+        if(json_object_object_get_ex(j, "origin", &jorigin))
           origin = json_object_get_string(jorigin);
 
 #if 0
 	const char *scope  = json_object_get_string(json_object_object_get(j, "scope"));
 	if(strcmp(scope, "public") != 0) {
 	  /* This is a private URL and it needs authentication */
-	  u_int8_t authorized = getAuthorizedUser(conn, request_info, username, sizeof(username), group, csrf, &localuser);
+	  authorized = getAuthorizedUser(conn, request_info, username, sizeof(username), group, csrf, &localuser);
 
 	  if(!authorized) {
 	    char referer[255];
@@ -1014,10 +1055,12 @@ static int handle_lua_request(struct mg_connection *conn) {
 	    redirect_to_login(conn, request_info, make_referer(conn, referer, sizeof(referer)));
 	    return(1); /* Handled */
 	  }
+	} else {
+        authorized = 1;
 	}
 #endif
 
-        if (origin != NULL) {	
+        if(origin != NULL) {	
           original_uri = request_info->uri;       
           snprintf(tmp_uri, sizeof(tmp_uri),  "/lua/widgets/%s", origin);
         }
@@ -1047,9 +1090,33 @@ static int handle_lua_request(struct mg_connection *conn) {
 
   whitelisted = isWhitelistedURI(request_info->uri);
 
-  if(!isStaticResourceUrl(request_info, len)) {
+  if(!isStaticResourceUrl(request_info, len) && !authorized) {
+    /* Add support for CORS https://javascript.info/fetch-crossorigin#step-1-preflight-request */
+    if(!strcmp(request_info->request_method, "OPTIONS")) {
+      const char *req_method;
+      
+      if((req_method = mg_get_header(conn, "Access-Control-Request-Method")) != NULL) {
+	const char *req_headers;
+	
+	if((strcmp(req_method, "GET") == 0) 
+	   && (req_headers = mg_get_header(conn, "Access-Control-Request-Headers"))) {
+	  const char *origin = mg_get_header(conn, "Origin");
+
+	  mg_printf(conn, "HTTP/1.1 200 OK\r\n"
+		    "Access-Control-Allow-Origin: %s\r\n"
+		    "Access-Control-Allow-Methods: %s\r\n"
+		    "Access-Control-Allow-Headers: %s\r\n"
+		    "Access-Control-Max-Age: 3600\r\n"
+		    "\r\n",
+		    origin ? origin : "*",
+		    req_method, req_headers);
+	  return(1); /* Handled */		
+	}
+      }
+    }
+	  	  
     /* Only check authorized for non-static resources */
-    u_int8_t authorized = getAuthorizedUser(conn, request_info, username, sizeof(username), group, csrf, &localuser);
+    authorized = getAuthorizedUser(conn, request_info, username, sizeof(username), group, csrf, &localuser);
 
     /* Make sure there are existing interfaces for username. */
     if(!ntop->checkUserInterfaces(username)) {
@@ -1082,7 +1149,7 @@ static int handle_lua_request(struct mg_connection *conn) {
       }
 
       return(1);
-    } else if ((strcmp(request_info->uri, CHANGE_PASSWORD_ULR) != 0)
+    } else if((strcmp(request_info->uri, CHANGE_PASSWORD_ULR) != 0)
         && (strcmp(request_info->uri, LOGOUT_URL) != 0)
          && authorized
         && ntop->mustChangePassword(username)) {

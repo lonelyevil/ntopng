@@ -31,7 +31,7 @@ graph_common.zoom_vals = {
     --{ "6M",  "now-6mon", 60*60*24*31*6},
     { "1Y",  "now-1y",   60*60*24*366}
  }
- 
+
  -- ##############################################
 
 function graph_common.getZoomDuration(cur_zoom)
@@ -40,10 +40,10 @@ function graph_common.getZoomDuration(cur_zoom)
       return(graph_common.zoom_vals[k][3])
        end
     end
- 
+
     return(180)
  end
- 
+
  -- ##############################################
 
  function graph_common.getZoomAtPos(cur_zoom, pos_offset)
@@ -60,7 +60,7 @@ function graph_common.getZoomDuration(cur_zoom)
     end
     return new_zoom_level
   end
-  
+
  -- ##############################################
 
 local graph_menu_entries = {}
@@ -258,7 +258,7 @@ function graph_common.printGraphMenuEntries(entry_print_callback, active_entry, 
       end
 
       if entry.html then
-	 print(entry.html)
+	   print(entry.html)
       else
 	 entry_print_callback(active_idx, entry)
 	 active_entries[#active_entries + 1] = entry
@@ -465,7 +465,7 @@ function graph_common.printSeries(options, tags, start_time, end_time, base_url,
 	    by_protocol[serie.protocol] = 1
 	 end
 
-	 for protocol in pairsByKeys(by_protocol, asc) do
+	 for protocol in pairsByKeys(by_protocol, asc_insensitive) do
 	    local proto_id = protocol
 	    graph_common.populateGraphMenuEntry(protocol, base_url, table.merge(params, {ts_schema=schema, protocol=proto_id}))
 	 end
@@ -498,7 +498,7 @@ function graph_common.printSeries(options, tags, start_time, end_time, base_url,
 	    by_protocol[sortkey] = serie.l4proto
 	 end
 
-	 for _, protocol in pairsByKeys(by_protocol, asc) do
+	 for _, protocol in pairsByKeys(by_protocol, asc_insensitive) do
 	    local proto_id = protocol
 	    local label
 
@@ -531,7 +531,7 @@ function graph_common.printSeries(options, tags, start_time, end_time, base_url,
 	    by_category[getCategoryLabel(serie.category)] = serie.category
 	 end
 
-	 for label, category in pairsByKeys(by_category, asc) do
+	 for label, category in pairsByKeys(by_category, asc_insensitive) do
 	    graph_common.populateGraphMenuEntry(label, base_url, table.merge(params, {ts_schema=schema, category=category}))
 	 end
       end
@@ -611,11 +611,7 @@ local locally_defined_custom_schemas = {
       axis = {1},
       tags_ignore = {nil, {user_script=1}},
       exclude = {num_calls=1},
-   }, ["custom:flow_misbehaving_vs_alerted"] = {
-      bases = {"iface:misbehaving_flows", "iface:alerted_flows"},
-      types = {"line", "line"},
-      axis = {1,1},
-   }
+   },
 }
 
 -- ##############################################

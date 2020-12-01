@@ -31,7 +31,9 @@ ParsedFlowCore::ParsedFlowCore() {
   src_tos = dst_tos = 0;
   version = 0;
   device_ip = 0;
-  src_port = dst_port = inIndex = outIndex = 0;
+  src_port = dst_port = 0;
+  inIndex = outIndex = 0;
+  deviceId = 0;
   l7_proto = Flow::get_ndpi_unknown_protocol();
   vlan_id = 0;
   pkt_sampling_rate = 1; /* 1:1 (no sampling) */
@@ -56,6 +58,7 @@ ParsedFlowCore::ParsedFlowCore(const ParsedFlowCore &pfc) {
   device_ip = pfc.device_ip;
   src_port = pfc.src_port, dst_port = pfc.dst_port;
   inIndex = pfc.inIndex, outIndex = pfc.outIndex;
+  deviceId = pfc.deviceId;
   l7_proto = pfc.l7_proto;
   vlan_id = pfc.vlan_id;
   pkt_sampling_rate = pfc.pkt_sampling_rate;
@@ -89,6 +92,7 @@ void ParsedFlowCore::swap() {
   u_int32_t tmp_ooo_pkts, tmp_retr_pkts, tmp_lost_pkts;
   struct timeval tmp_nw_latency;
   u_int32_t tmp_src_as, tmp_prev_adjacent_as;
+  u_int16_t tmp_window;
   
   memcpy(&tmp_mac, &src_mac, sizeof(tmp_mac));
   tmp_ip.set(&src_ip);
@@ -98,6 +102,7 @@ void ParsedFlowCore::swap() {
   tmp_tcp_flags = tcp.client_tcp_flags;
   tmp_ooo_pkts = tcp.ooo_in_pkts, tmp_retr_pkts = tcp.retr_in_pkts, tmp_lost_pkts = tcp.lost_in_pkts;
   memcpy(&tmp_nw_latency, &tcp.clientNwLatency, sizeof(tcp.clientNwLatency));
+  tmp_window = tcp.in_window;
   tmp_src_as = src_as, tmp_prev_adjacent_as = prev_adjacent_as;
 
   memcpy(&src_mac, &dst_mac, sizeof(src_mac));
@@ -108,6 +113,7 @@ void ParsedFlowCore::swap() {
   tcp.client_tcp_flags = tcp.server_tcp_flags;
   tcp.ooo_in_pkts = tcp.ooo_out_pkts, tcp.retr_in_pkts = tcp.retr_out_pkts, tcp.lost_in_pkts = tcp.lost_out_pkts;
   memcpy(&tcp.clientNwLatency, &tcp.serverNwLatency, sizeof(tcp.clientNwLatency));
+  tcp.in_window = tcp.out_window;
   src_as = dst_as, prev_adjacent_as = next_adjacent_as;
 
   memcpy(&dst_mac, &tmp_mac, sizeof(dst_mac));
@@ -118,6 +124,7 @@ void ParsedFlowCore::swap() {
   tcp.server_tcp_flags = tmp_tcp_flags;
   tcp.ooo_out_pkts = tmp_ooo_pkts, tcp.retr_out_pkts = tmp_retr_pkts, tcp.lost_out_pkts = tmp_lost_pkts;
   memcpy(&tcp.serverNwLatency, &tmp_nw_latency, sizeof(tcp.serverNwLatency));
+  tcp.out_window = tmp_window;
   dst_as = tmp_src_as, next_adjacent_as = tmp_prev_adjacent_as;
 }
 

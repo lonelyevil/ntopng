@@ -52,12 +52,6 @@ class TrafficShaper;
 class NIndexFlowDB;
 #endif
 
-typedef struct {
-  u_int32_t criteria;        /* IP address, interface... */
-  NetworkInterface *iface;
-  UT_hash_handle hh;         /* makes this structure hashable */
-} FlowHashing;
-
 /** @class NetworkInterface
  *  @brief Main class of network interface of ntopng.
  *  @details .......
@@ -70,20 +64,44 @@ class NetworkInterface : public AlertableEntity {
   char *ifname, *ifDescription;
   bpf_u_int32 ipv4_network_mask, ipv4_network;
   const char *customIftype;
-  u_int8_t purgeRuns;
+  u_int8_t purgeRuns;  
   u_int32_t bridge_lan_interface_id, bridge_wan_interface_id;
-  u_int32_t num_alerts_engaged[MAX_NUM_PERIODIC_SCRIPTS];
-  u_int64_t num_active_alerted_flows, num_idle_alerted_flows;
-  u_int64_t num_active_misbehaving_flows, num_idle_misbehaving_flows;
+  std::atomic<u_int32_t> num_alerts_engaged; /* Possibly touched by multiple concurrent threads */
+  /* Counters for active alerts. Changed by multiple concurrent threads */
+  std::atomic<u_int64_t> num_active_alerted_flows_notice;  /* Counts all flow alerts with severity <= notice  */
+  std::atomic<u_int64_t> num_active_alerted_flows_warning; /* Counts all flow alerts with severity == warning */
+  std::atomic<u_int64_t> num_active_alerted_flows_error;   /* Counts all flow alerts with severity >= error   */
   u_int32_t num_dropped_alerts, prev_dropped_alerts, checked_dropped_alerts, num_dropped_flow_scripts_calls;
   u_int64_t num_written_alerts, num_alerts_queries;
   u_int64_t num_new_flows;
   bool has_stored_alerts;
   AlertsQueue *alertsQueue;
 #if defined(NTOPNG_PRO) && !defined(HAVE_NEDGE)
-  PeriodicityHash *pHash;
+  PeriodicityMap *pMap;
+  ServiceMap *sMap;
 #endif
+
+  /* Flows queues waiting to be dumped */
+  SPSCQueue<Flow *> *idleFlowsToDump, *activeFlowsToDump;
+  Condvar dump_condition; /* Condition variable used to wait when no flows have been enqueued for dump */
   
+
+  /* Queues for the execution of flow user scripts.
+     See scripts/plugins/examples/example/user_scripts/flow/example.lua for the callbacks
+   */
+  SPSCQueue<Flow *> *hookProtocolDetected, *hookPeriodicUpdate, *hookFlowEnd;
+
+  /*
+    Flag to indicate whether a flow JSON should be dumped along with the flow. Flow JSON contain
+    additional fields not placed inside database columns.
+  */
+  bool flows_dump_json;
+  /*
+    Flag to indicate whether JSON labels should be used for flow fields inside the dumped flow
+    JSON. If this flag is false, flow fields are keyed with nProbe integer flow keys.
+   */
+  bool flows_dump_json_use_labels;
+
   /* Queue containing the ip@vlan strings of the hosts to restore. */
   FifoStringsQueue *hosts_to_restore;
 
@@ -95,14 +113,15 @@ class NetworkInterface : public AlertableEntity {
   std::map<std::pair<AlertEntity, std::string>, AlertableEntity*> external_alerts;
   Mutex external_alerts_lock;
 
-  bool is_view;             /* Whether this is a view interface */
-  ViewInterface *viewed_by; /* Whether this interface is 'viewed' by a ViewInterface */
+  bool is_view;                  /* Whether this is a view interface */
+  ViewInterface *viewed_by;      /* Whether this interface is 'viewed' by a ViewInterface */
+  u_int8_t viewed_interface_id;  /* When this is a 'viewed' interface, this id represents a unique interface identifier inside the view */
 
   /* Disaggregations */
   u_int16_t numSubInterfaces;
-  set<u_int32_t>  flowHashingIgnoredInterfaces;
+  std::set<u_int32_t>  flowHashingIgnoredInterfaces;
   FlowHashingEnum flowHashingMode;
-  FlowHashing *flowHashing;
+  std::map<u_int64_t, NetworkInterface*> flowHashing;
 
   /* Network Discovery */
   NetworkDiscovery *discovery;
@@ -151,8 +170,15 @@ class NetworkInterface : public AlertableEntity {
   ICMPstats icmp_v4, icmp_v6;
   LocalTrafficStats localStats;
   int pcap_datalink_type; /**< Datalink type of pcap. */
-  pthread_t pollLoop;
-  bool pollLoopCreated, has_too_many_hosts, has_too_many_flows, mtuWarningShown;
+  pthread_t pollLoop,
+    flowDumpLoop /* Thread for the database dump of flows */,
+    hookLoop /* Thread for the execution of flow user script hooks */;
+  FlowAlertCheckLuaEngine *hooksEngine;   /* Lua engine used to execute flow user script hooks */
+  volatile bool hooks_engine_reload;      /* Boolean indicating whether the hooksEngine should be reloaded */
+  time_t        hooks_engine_next_reload; /* The minimunm time for the next reload of the hooksEngine */
+  Condvar       hooks_condition;          /* Condition variable used to wait when no flows have been enqueued for hooks exec. */
+  bool pollLoopCreated, flowDumpLoopCreated, hookLoopCreated;
+  bool has_too_many_hosts, has_too_many_flows, mtuWarningShown;
   bool flow_dump_disabled;
   u_int32_t ifSpeed, numL2Devices, numHosts, numLocalHosts, scalingFactor;
   /* Those will hold counters at checkpoints */
@@ -164,6 +190,7 @@ class NetworkInterface : public AlertableEntity {
   PacketStats pktStats;
   DSCPStats *dscpStats;
   L4Stats l4Stats;
+  SyslogStats syslogStats;
   FlowHash *flows_hash; /**< Hash used to store flows information. */
   u_int32_t last_remote_pps, last_remote_bps;
   TimeseriesExporter *influxdb_ts_exporter, *rrd_ts_exporter;
@@ -207,7 +234,7 @@ class NetworkInterface : public AlertableEntity {
   void init();
   void deleteDataStructures();
 
-  NetworkInterface* getDynInterface(u_int32_t criteria, bool parser_interface);
+  NetworkInterface* getDynInterface(u_int64_t criteria, bool parser_interface);
   Flow* getFlow(Mac *srcMac, Mac *dstMac, u_int16_t vlan_id,
 		u_int32_t deviceIP, u_int16_t inIndex, u_int16_t outIndex,
 		const ICMPinfo * const icmp_info,
@@ -263,13 +290,27 @@ class NetworkInterface : public AlertableEntity {
   void topItemsCommit(const struct timeval *when);
   void checkMacIPAssociation(bool triggerEvent, u_char *_mac, u_int32_t ipv4);
   void checkDhcpIPRange(Mac *sender_mac, struct dhcp_packet *dhcp_reply, u_int16_t vlan_id);
-  bool checkBroadcastDomainTooLarge(u_int32_t bcast_mask, u_int16_t vlan_id, const u_int8_t *src_mac, const u_int8_t *dst_mac, u_int32_t spa, u_int32_t tpa) const;
+  bool checkBroadcastDomainTooLarge(u_int32_t bcast_mask, u_int16_t vlan_id,
+				    const u_int8_t *src_mac, const u_int8_t *dst_mac,
+				    u_int32_t spa, u_int32_t tpa) const;
   void pollQueuedeCompanionEvents();
   bool getInterfaceBooleanPref(const char *pref_key, bool default_pref_value) const;
   virtual void incEthStats(bool ingressPacket, u_int16_t proto, u_int32_t num_pkts,
 			   u_int32_t num_bytes, u_int pkt_overhead) {
-    ethStats.incStats(ingressPacket, proto, num_pkts, num_bytes, pkt_overhead);
+    ethStats.incStats(ingressPacket, num_pkts, num_bytes, pkt_overhead);
+    ethStats.incProtoStats(proto, num_pkts, num_bytes);
   };
+
+  /*
+    Dequeues flows from `q` up to `budget` and executes `flow_lua_callback` on each of them.
+    The number of flows dequeued is returned.
+   */
+  u_int64_t dequeueFlows(SPSCQueue<Flow *> *q, FlowLuaCall flow_lua_call, u_int budget);
+  /*
+    The lua engine for the execution of user script flow hooks is reused. This function
+    periodically check and possibly decides to reload the engine.
+   */
+  void updateHooksEngineReload();
 
  public:
   /**
@@ -282,6 +323,7 @@ class NetworkInterface : public AlertableEntity {
   NetworkInterface(const char *name, const char *custom_interface_type = NULL);
   virtual ~NetworkInterface();
 
+  bool initHookLoop(); /* Initialize the loop to dequeue flows for the execution of user script hooks */
   bool initFlowDump(u_int8_t num_dump_interfaces);
   u_int32_t getASesHashSize();
   u_int32_t getCountriesHashSize();
@@ -302,6 +344,7 @@ class NetworkInterface : public AlertableEntity {
   inline void getIPv4Address(bpf_u_int32 *a, bpf_u_int32 *m) { *a = ipv4_network, *m = ipv4_network_mask; };
   inline AddressTree* getInterfaceNetworks()   { return(&interface_networks); };
   virtual void startPacketPolling();
+  virtual void startFlowDumping();
   virtual void shutdown();
   virtual void cleanup();
   virtual char *getEndpoint(u_int8_t id)       { return NULL;   };
@@ -314,6 +357,16 @@ class NetworkInterface : public AlertableEntity {
     return(getIfType() != interface_type_FLOW && getIfType() != interface_type_ZMQ);
   }
 
+  virtual bool isSyslogInterface() const {
+    return(getIfType() == interface_type_SYSLOG);
+  }
+  void incSyslogStats(u_int32_t num_total_events, u_int32_t num_malformed,
+                      u_int32_t num_dispatched, u_int32_t num_unhandled, u_int32_t num_alerts,
+                      u_int32_t num_host_correlations, u_int32_t num_collected_flows) {
+    syslogStats.incStats(num_total_events, num_malformed, num_dispatched, num_unhandled,
+      num_alerts, num_host_correlations, num_collected_flows);
+  };
+
 #if defined(linux) && !defined(HAVE_LIBCAP) && !defined(HAVE_NEDGE)
   /* Note: if we miss the capabilities, we block the overriding of this method. */
   inline bool
@@ -322,7 +375,7 @@ class NetworkInterface : public AlertableEntity {
 #endif
 		      isDiscoverableInterface(){ return(false);                              }
   inline virtual char* altDiscoverableName()   { return(NULL);                               }
-  inline virtual const char* get_type()        { return(customIftype ? customIftype : CONST_INTERFACE_TYPE_UNKNOWN); }
+  virtual const char* get_type()    const      { return(customIftype ? customIftype : CONST_INTERFACE_TYPE_UNKNOWN); }
   virtual InterfaceType getIfType() const      { return(interface_type_UNKNOWN); }
   inline FlowHash *get_flows_hash()            { return flows_hash;     }
   inline TcpFlowStats* getTcpFlowStats()       { return(&tcpFlowStats); }
@@ -359,7 +412,17 @@ class NetworkInterface : public AlertableEntity {
   inline void setSeenExternalAlerts()          { has_external_alerts = true;   }
   struct ndpi_detection_module_struct* get_ndpi_struct() const;
   inline bool is_purge_idle_interface()        { return(purge_idle_flows_hosts);               };
-  int dumpFlow(time_t when, Flow *f, bool no_time_left);
+  int dumpFlow(time_t when, Flow *f);
+  /*
+    Enqueue flows for the execution of periodic scripts
+   */
+  bool hookEnqueue(time_t t, Flow *f);
+  /*
+    Enqueue flows to be processed by the view interfaces.
+    Viewed interface enqueue flows using this method so that the view
+    can periodicall dequeue them and update its statistics;
+   */
+  bool viewEnqueue(time_t t, Flow *f);
 #ifdef NTOPNG_PRO
   void flushFlowDump();
 #endif
@@ -370,8 +433,7 @@ class NetworkInterface : public AlertableEntity {
   inline void incLostPkts(u_int32_t num)            { tcpPacketStats.incLost(num);      };
   inline void incKeepAlivePkts(u_int32_t num)       { tcpPacketStats.incKeepAlive(num); };
   virtual void checkPointCounters(bool drops_only);
-  bool registerSubInterface(NetworkInterface *sub_iface, u_int32_t criteria);
-  u_int32_t checkDroppedAlerts();
+  bool registerSubInterface(NetworkInterface *sub_iface, u_int64_t criteria);
 
   /* Overridden in ViewInterface.cpp */
   virtual u_int64_t getCheckPointNumPackets();
@@ -425,8 +487,9 @@ class NetworkInterface : public AlertableEntity {
   virtual void sumStats(TcpFlowStats *_tcpFlowStats, EthStats *_ethStats,
 			LocalTrafficStats *_localStats, nDPIStats *_ndpiStats,
 			PacketStats *_pktStats, TcpPacketStats *_tcpPacketStats,
-			ProtoStats *_discardedProbingStats, DSCPStats *_dscpStats) const;
-
+			ProtoStats *_discardedProbingStats, DSCPStats *_dscpStats,
+			SyslogStats *_syslogStats) const;
+  inline DB *getDB() const         { return db;                  };
   inline EthStats* getStats()      { return(&ethStats);          };
   inline int get_datalink()        { return(pcap_datalink_type); };
   inline void set_datalink(int l)  { pcap_datalink_type = l;     };
@@ -479,16 +542,26 @@ class NetworkInterface : public AlertableEntity {
   void getActiveFlowsStats(nDPIStats *stats, FlowStats *status_stats, AddressTree *allowed_hosts, Host *h, Paginator *p);
   virtual u_int32_t periodicStatsUpdateFrequency() const;
   void periodicStatsUpdate();
-  virtual void periodicHTStateUpdate(time_t deadline, lua_State* vm, bool skip_user_scripts);
+  u_int64_t purgeQueuedIdleEntries();
+  u_int64_t purgeQueuedIdleFlows();
   struct timeval periodicUpdateInitTime() const;
-  static bool generic_periodic_hash_entry_state_update(GenericHashEntry *node, void *user_data);
   virtual u_int32_t getFlowMaxIdle();
 
   virtual void lua(lua_State* vm);
-  void luaPeriodicityStats(lua_State* vm);
-  
+  void luaAlertedFlows(lua_State* vm);
+  void luaPeriodicityStats(lua_State* vm, IpAddress *ip_address);
+  void luaServiceMap(lua_State* vm, IpAddress *ip_address, u_int16_t vlan_id);
+#if defined(NTOPNG_PRO) && !defined(HAVE_NEDGE)
+  inline ServiceMap* getServiceMap()         { return(sMap);           };
+  inline void flushServiceMap()              { if(sMap) sMap->flush(); };
+  inline PeriodicityMap* getPeriodicityMap() { return(pMap);           };
+  inline void flushPeriodicityMap()          { if(pMap) pMap->flush(); };
+  void updateFlowPeriodicity(Flow *f);
+  void updateServiceMap(Flow *f);  
+#endif
   void lua_hash_tables_stats(lua_State* vm);
   void lua_periodic_activities_stats(lua_State* vm);
+  virtual void lua_queues_stats(lua_State* vm);
   void getnDPIProtocols(lua_State *vm, ndpi_protocol_category_t filter, bool skip_critical);
 
   int getActiveHostsList(lua_State* vm,
@@ -593,7 +666,7 @@ class NetworkInterface : public AlertableEntity {
     return getNumDiscardedProbingBytes() - getCheckPointNumDiscardedProbingBytes();
   }
 
-  void runHousekeepingTasks();
+  virtual void runHousekeepingTasks();
   void runShutdownTasks();
   Vlan* getVlan(u_int16_t vlanId, bool create_if_not_present, bool is_inline_call);
   AutonomousSystem *getAS(IpAddress *ipa, bool create_if_not_present, bool is_inline_call);
@@ -630,7 +703,6 @@ class NetworkInterface : public AlertableEntity {
   void updateFlowsL7Policy();
 #endif
   void resetPoolsStats(u_int16_t pool_filter);
-  inline void luaHostPoolsVolatileMembers(lua_State *vm) { if (host_pools) host_pools->luaVolatileMembers(vm); };
 #endif
   inline void luaHostPoolsStats(lua_State *vm)           { if (host_pools) host_pools->luaStats(vm);           };
   void refreshHostPools();
@@ -674,8 +746,8 @@ class NetworkInterface : public AlertableEntity {
 #endif
 
   void getFlowsStatus(lua_State *vm);
-  inline void startDBLoop()                   { if(db) db->startDBLoop();                 };
-  inline void incDBNumDroppedFlows(u_int num) { if(db) db->incNumDroppedFlows(num);       };
+  inline void startDBLoop() { if(db) db->startDBLoop(); };
+  inline void incDBNumDroppedFlows(DB *dumper, u_int num = 1) { if(dumper) dumper->incNumDroppedFlows(num); };
 #ifdef NTOPNG_PRO
   inline void getFlowDevices(lua_State *vm) {
     if(flow_interfaces_stats) flow_interfaces_stats->luaDeviceList(vm); else lua_newtable(vm);
@@ -705,11 +777,19 @@ class NetworkInterface : public AlertableEntity {
   bool isHiddenFromTop(Host *host);
   virtual bool areTrafficDirectionsSupported() { return(false); };
 
-  inline bool isView()             const { return is_view;    };
-  inline ViewInterface* viewedBy() const { return viewed_by;  };
-  inline bool isViewed()           const { return viewedBy() != NULL; };
-
-  inline void setViewed(ViewInterface *view_iface) { viewed_by = view_iface; };
+  inline bool isView()                const { return is_view;             };
+  inline ViewInterface*    viewedBy() const { return viewed_by;           };
+  inline u_int8_t       getViewedId() const { return viewed_interface_id; };
+  inline bool isViewed()              const { return viewedBy() != NULL;  };
+  /*
+    Method called by a view interface on all its viewed interfaces.
+    The view passes to this method both its pointer and the viewed interface id,
+    that is, a numeric identifier for the viewed interface inside the view interface.
+   */
+  inline void setViewed(ViewInterface *view_iface, u_int8_t _viewed_interface_id) {
+    viewed_by = view_iface;
+    viewed_interface_id = _viewed_interface_id;
+  };
 
   bool getMacInfo(lua_State* vm, char *mac);
   bool resetMacStats(lua_State* vm, char *mac, bool delete_data);
@@ -727,8 +807,7 @@ class NetworkInterface : public AlertableEntity {
 #ifdef NTOPNG_PRO
   virtual bool getCustomAppDetails(u_int32_t remapped_app_id, u_int32_t *const pen, u_int32_t *const app_field, u_int32_t *const app_id) { return false; };
   virtual void addToNotifiedInformativeCaptivePortal(u_int32_t client_ip) { ; };
-  virtual void addIPToLRUMatches(u_int32_t client_ip, u_int16_t user_pool_id,
-				 char *label, int32_t lifetime_sec) { ; };
+  virtual void addIPToLRUMatches(u_int32_t client_ip, u_int16_t user_pool_id, char *label) { ; };
 #endif
 
   inline char* mdnsResolveIPv4(u_int32_t ipv4addr /* network byte order */,
@@ -799,15 +878,12 @@ class NetworkInterface : public AlertableEntity {
   inline void profiling_section_exit(int id) { PROFILING_SECTION_EXIT(id); };
 #endif
 
-  void incNumAlertedFlows(Flow *f);
-  void decNumAlertedFlows(Flow *f);
+  void incNumAlertedFlows(Flow *f, AlertLevel severity);
+  void decNumAlertedFlows(Flow *f, AlertLevel severity);
   virtual u_int64_t getNumActiveAlertedFlows()      const;
-  inline void incNumMisbehavingFlows()		 	  { num_active_misbehaving_flows++; }
-  inline void decNumMisbehavingFlows() 			  { num_idle_misbehaving_flows++;   }
-  virtual u_int64_t getNumActiveMisbehavingFlows()      const;
   inline void setHasAlerts(bool has_stored_alerts)        { this->has_stored_alerts = has_stored_alerts; }
-  inline void incNumAlertsEngaged(ScriptPeriodicity p)    { num_alerts_engaged[(u_int)p]++; }
-  inline void decNumAlertsEngaged(ScriptPeriodicity p)    { num_alerts_engaged[(u_int)p]--; }
+  inline void incNumAlertsEngaged()                       { num_alerts_engaged++; }
+  inline void decNumAlertsEngaged()                       { num_alerts_engaged--; }
   inline bool hasAlerts()                                 { return(has_stored_alerts || (getNumEngagedAlerts() > 0)); }
   inline void refreshHasAlerts()                          { has_stored_alerts = alertsManager ? alertsManager->hasAlerts() : false; }
   inline void incNumDroppedAlerts(u_int32_t num_dropped)  { num_dropped_alerts += num_dropped; }
@@ -816,28 +892,34 @@ class NetworkInterface : public AlertableEntity {
   inline u_int64_t getNumDroppedAlerts()		  { return(num_dropped_alerts); }
   inline u_int64_t getNumWrittenAlerts()		  { return(num_written_alerts); }
   inline u_int64_t getNumAlertsQueries()		  { return(num_alerts_queries); }
-  void walkAlertables(int entity_type, const char *entity_value, std::set<int> *entity_excludes,
-	    AddressTree *allowed_nets, alertable_callback *callback, void *user_data);
-  void getEngagedAlertsCount(lua_State *vm, int entity_type, const char *entity_value,
-	    std::set<int> *entity_excludes, AddressTree *allowed_nets);
+  void walkAlertables(int entity_type, const char *entity_value,
+		      AddressTree *allowed_nets, alertable_callback *callback, void *user_data);
+  void getEngagedAlertsCount(lua_State *vm, int entity_type, const char *entity_value, AddressTree *allowed_nets);
   void getEngagedAlerts(lua_State *vm, int entity_type, const char *entity_value, AlertType alert_type,
-	    AlertLevel alert_severity, std::set<int> *entity_excludes, AddressTree *allowed_nets);
+			AlertLevel alert_severity, AddressTree *allowed_nets);
   inline void incNumDroppedFlowScriptsCalls()             { num_dropped_flow_scripts_calls++; }
-  void computeHostsScore();
 
   /* unlockExternalAlertable must be called after use whenever a non-null reference is returned */
   AlertableEntity* lockExternalAlertable(AlertEntity entity, const char *entity_val, bool create_if_missing);
   void unlockExternalAlertable(AlertableEntity *entity);
 
-  virtual bool reproducePcapOriginalSpeed() const         { return(false); }
-  u_int32_t getNumEngagedAlerts();
+  virtual bool reproducePcapOriginalSpeed() const         { return(false);             }
+  inline u_int32_t getNumEngagedAlerts()    const         { return num_alerts_engaged; };
   void releaseAllEngagedAlerts();
 
-#if defined(NTOPNG_PRO) && !defined(HAVE_NEDGE)
-  void updateFlowPeriodicity(Flow *f);
-#endif
-
-
+  virtual void hookFlowLoop(); /* Body of the loop that dequeues flows for the execution of user script hooks */
+  virtual void dumpFlowLoop(); /* Body of the loop that dequeues flows for the database dump */
+  void incNumQueueDroppedFlows(u_int32_t num);
+  /*
+    Dequeues enqueued flows to dump them to database
+   */
+  u_int64_t dequeueFlowsForDump(u_int idle_flows_budget, u_int active_flows_budget);
+  /*
+    Dequeues enqueued flows to execute user script callbacks.
+    Budgets indicate how many flows should be dequeued (if available) to perform protocol detected, active,
+    and idle callbacks.
+   */
+  virtual u_int64_t dequeueFlowsForHooks(u_int protocol_detected_budget, u_int active_budget, u_int idle_budget);
 };
 
 #endif /* _NETWORK_INTERFACE_H_ */

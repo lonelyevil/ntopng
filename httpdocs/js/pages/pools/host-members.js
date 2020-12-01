@@ -5,28 +5,30 @@
 
 $(document).ready(function () {
 
-    let memberRowData = null;
-
     // this is the current filtering type for the datatable
     let currentType = null;
+    const INDEX_MEMBER_FILTER = 0;
 
     const filters = [
         {
-            regex: `${REGEXES.ipv4}`,
+            regex: NtopUtils.getIPv4RegexWithCIDR(),
             label: i18n.ipv4,
             key: 'ipv4_filter',
+            countable: true,
             callback: () => { currentType = "ip"; $hostMembersTable.rows().invalidate(); }
         },
         {
-            regex: `${REGEXES.ipv6}`,
+            regex: NtopUtils.getIPv6RegexWithCIDR(),
             label: i18n.ipv6,
             key: 'ipv6_filter',
+            countable: true,
             callback: () => { currentType = "ip"; $hostMembersTable.rows().invalidate(); }
         },
         {
-            regex: REGEXES.macAddress,
+            regex: NtopUtils.REGEXES.macAddress,
             label: i18n.mac_filter,
             key: 'mac_filter',
+            countable: true,
             callback: () => { currentType = "mac"; $hostMembersTable.rows().invalidate(); }
         },
     ];
@@ -35,6 +37,12 @@ $(document).ready(function () {
         {
             text: '<i class="fas fa-plus"></i>',
             action: () => { $(`#add-member-modal`).modal('show'); }
+        },
+        {
+            text: '<i class="fas fa-sync"></i>',
+            action: function(e, dt, node, config) {
+                $hostMembersTable.ajax.reload();
+            }
         }
     ]);
     dtConfig = DataTableUtils.setAjaxConfig(dtConfig, `${http_prefix}/lua/rest/v1/get/host/pool/members.lua?pool=${queryPoolId}`, `rsp`);
@@ -47,8 +55,7 @@ $(document).ready(function () {
                 render: function (data, type, row) {
 
                     if (type == "sort" || type == "type") {
-                        if (currentType == "mac")
-                            return $.fn.dataTableExt.oSort["mac-address-pre"](data);
+                        if (currentType == "mac") return $.fn.dataTableExt.oSort["mac-address-pre"](data);
                         return $.fn.dataTableExt.oSort["ip-address-pre"](data);
                     }
 
@@ -57,7 +64,7 @@ $(document).ready(function () {
             },
             {
                 data: 'vlan',
-                width: '5',
+                width: '5%',
                 className: 'text-center',
                 render: function (data, type, row) {
 
@@ -68,31 +75,27 @@ $(document).ready(function () {
             {
                 data: null, targets: -1, className: 'text-center',
                 width: "10%",
-                render: function () {
-                    return (`
-                        <div class='btn-group btn-group-sm'>
-                            <a data-toggle="modal" class="btn btn-danger" href="#remove-member-host-pool">
-                                <i class="fas fa-trash"></i>
-                            </a>
-                        </div>
-                    `);
+                render: () => {
+                    return DataTableUtils.createActionButtons([
+                        { class: 'btn-danger', icon: 'fa-trash', modal: '#remove-member-host-pool'}
+                    ]);
                 }
             }
-        ],
-        initComplete: function (settings, json) {
-
-            const tableAPI = settings.oInstance.api();
-            DataTableUtils.addFilterDropdown(
-                i18n.member_type, filters, 0, '#host-members-table_filter', tableAPI
-            );
-        }
+        ]
     });
 
     const $hostMembersTable = $(`#host-members-table`).DataTable(dtConfig);
+    const hostMemersTableFilters = new DataTableFiltersMenu({
+        tableAPI: $hostMembersTable,
+        filters: filters,
+        filterMenuKey: 'host-members',
+        filterTitle: i18n.member_type,
+        columnIndex: INDEX_MEMBER_FILTER,
+    })
 
     $(`#host-members-table`).on('click', `a[href='#remove-member-host-pool']`, function (e) {
-        memberRowData = $hostMembersTable.row($(this).parent().parent()).data();
-        $removeModalHandler.invokeModalInit();
+        const memberRowData = $hostMembersTable.row($(this).parent().parent()).data();
+        $removeModalHandler.invokeModalInit(memberRowData);
     });
 
     $(`#select-host-pool`).change(function () {
@@ -100,8 +103,62 @@ $(document).ready(function () {
         selectedPool = { name: $(`#select-host-pool option:selected`).text(), id: $(this).val() };
         // update the datatable
         $hostMembersTable.ajax.url(`${http_prefix}/lua/rest/v1/get/host/pool/members.lua?pool=${selectedPool.id}`).load().draw(false);
+        // change pool id in edit pool link
+        $(`.edit-pool-link`).attr('href', `${http_prefix}/lua/admin/manage_pools.lua?pool=host&pool_id=${selectedPool.id}`);
         queryPoolId = selectedPool.id;
         history.pushState({ pool: queryPoolId }, '', location.href.replace(/pool\=[0-9]+/, `pool=${queryPoolId}`));
+    });
+
+    $(`[href='#import-modal']`).click(function() {
+        $(`.member-name`).html(selectedPool.name);
+    });
+
+    $(`input#import-input`).on('change', function () {
+        const filename = $(this).val().replace("C:\\fakepath\\", "");
+        $(`label[for='#import-input']`).html(filename);
+        $(`#btn-confirm-import`).removeAttr("disabled");
+    });
+
+    const oldLabelImportInput = $(`label[for='#import-input']`).html();
+    $(`#import-modal`).on('hidden.bs.modal', function () {
+        $(`#import-input`).val('');
+        $(`label[for='#import-input']`).html(oldLabelImportInput);
+        $("#import-error").hide().removeClass('text-warning').addClass('invalid-feedback');
+        $(`#btn-confirm-import`).attr("disabled", "disabled");
+    });
+
+    $(`#import-modal form`).submit(function(e) {
+        e.preventDefault();
+
+        const $button = $(`#btn-confirm-import`);
+
+        const inputFilename = $('#import-input')[0].files[0];
+        if (!inputFilename) {
+            $("#import-error").text(`${i18n.no_file}`).show();
+            $button.removeAttr("disabled");
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.readAsText(inputFilename, "UTF-8");
+
+        reader.onload = (function() {
+            const req = $.post(`${http_prefix}/lua/rest/v1/import/pool/host_pool/members.lua`, {csrf: importCsrf, pool: selectedPool.id, host_pool_members: reader.result});
+            req.then(function(response) {
+
+                if (response.rc < 0) {
+                    $("#import-error").show().html(response.rc_str_hr);
+                    return;
+                }
+
+                location.reload();
+            });
+            req.fail(function(response) {
+                if (response.rc < 0) {
+                    $("#import-error").show().html(response.rc_str_hr);
+                }
+            });
+        });
     });
 
     $(window).on('popstate', function (e) {
@@ -120,29 +177,33 @@ $(document).ready(function () {
             $(macAndNetworkFields).hide();
 
             $(`#add-member-modal .ip-fields`).show().find(`input,select`).removeAttr("disabled");
-
             $(`#add-modal-feedback`).hide();
+
+            $(`#add-member-modal [name='member_type']`).removeAttr('checked').parent().removeClass('active');
+            // show the default view
+            $(`#add-member-modal #ip-radio`).attr('checked', '').parent().addClass('active');
         },
-        onModalInit: function () {
+        onModalInit: function (_, modalHandler) {
             // on select member type shows only the fields interested
-            $(`#add-member-modal select[name='member_type']`).change(function () {
+            $(`#add-member-modal [name='member_type']`).change(function () {
 
                 const value = $(this).val();
-                // clean the members and show the selected one
-                $(`#add-member-modal [class*='fields']`).hide()
-                    .find('input,select').attr("disabled", true).removeClass('is-invalid');
-                $(`#add-member-modal [class*='fields'] input`).val("");
-                // select the default value inside the selected
-                $(`#add-member-modal [class*='fields'] select`).val($(`#add-member-modal [class*='fields'] select option[selected]`).val());
-                $(`#add-member-modal [class*='fields'] select option`).removeAttr("disabled");
+                $(`#add-member-modal [name='member_type']`).removeAttr('checked').parent().removeClass('active');
+                $(this).attr('checked', '');
 
-                $(`#add-member-modal [class='${value}-fields']`).fadeIn().find('input,select').removeAttr("disabled");
+                // clean the members and show the selected one
+                $(`#add-member-modal [class*='fields']`).hide();
+                $(`#add-member-modal [class*='fields'] input, #add-member-modal [class*='fields'] select`).attr("disabled", "disabled");
+
+                $(`#add-member-modal [class='${value}-fields']`).show().find('input,select').removeAttr("disabled");
+
+                modalHandler.toggleFormSubmission();
             });
         },
         beforeSumbit: function () {
 
             let member;
-            const typeSelected = $(`#add-member-modal select[name='member_type']`).val();
+            const typeSelected = $(`#add-member-modal [name='member_type']:checked`).val();
 
             if (typeSelected == "mac") {
                 member = $(`#add-member-modal input[name='mac_address']`).val();
@@ -151,7 +212,7 @@ $(document).ready(function () {
 
                 const ipAddress = $(`#add-member-modal input[name='ip_address']`).val();
                 const vlan = $(`#add-member-modal input[name='ip_vlan']`).val() || 0;
-                const cidr = is_good_ipv6(ipAddress) ? 128 : 32;
+                const cidr = NtopUtils.is_good_ipv6(ipAddress) ? 128 : 32;
                 member = `${ipAddress}/${cidr}@${vlan}`;
             }
             else {
@@ -168,13 +229,11 @@ $(document).ready(function () {
         onSubmitSuccess: function (response, textStatus, modalHandler) {
 
             if (response.rc < 0) {
-                $(`#add-modal-feedback`).html(i18n.rest[response.rc_str]).fadeIn();
+                $(`#add-modal-feedback`).html(i18n.rest[response.rc_str]).show();
                 return;
             }
 
             $hostMembersTable.ajax.reload();
-
-            modalHandler.cleanForm();
             $(`#add-member-modal`).modal('hide');
         }
     }).invokeModalInit();
@@ -186,12 +245,12 @@ $(document).ready(function () {
         onModalShow: function () {
             $(`#remove-modal-feedback`).hide();
         },
-        onModalInit: function () {
-            $(`#remove-member-name`).html(`<b>${memberRowData.name}</b>`);
+        onModalInit: function (hostMember) {
+            $(`.remove-member-name`).html(`${hostMember.name}`);
             $(`#remove-pool-name`).html(`<b>${selectedPool.name}</b>`);
         },
-        beforeSumbit: function () {
-            return { pool: defaultPoolId, member: memberRowData.member };
+        beforeSumbit: function (hostMember) {
+            return { pool: defaultPoolId, member: hostMember.member };
         },
         onSubmitSuccess: function (response, textStatus, modalHandler) {
 
@@ -199,7 +258,6 @@ $(document).ready(function () {
                 $(`#remove-modal-feedback`).html(i18n.rest[response.rc_str]).fadeIn();
                 return;
             }
-
             $hostMembersTable.ajax.reload();
             $(`#remove-member-host-pool`).modal('hide');
         }

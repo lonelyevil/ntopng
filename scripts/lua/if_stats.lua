@@ -20,6 +20,9 @@ local format_utils  = require "format_utils"
 local top_talkers_utils = require "top_talkers_utils"
 local internals_utils = require "internals_utils"
 local page_utils = require("page_utils")
+local ui_utils = require("ui_utils")
+local interface_pools = require ("interface_pools")
+
 
 require "lua_utils"
 require "prefs_utils"
@@ -31,6 +34,7 @@ local recording_utils = require "recording_utils"
 local companion_interface_utils = require "companion_interface_utils"
 local storage_utils = require "storage_utils"
 
+
 local have_nedge = ntop.isnEdge()
 
 if ntop.isPro() then
@@ -38,7 +42,6 @@ if ntop.isPro() then
 end
 
 sendHTTPContentTypeHeader('text/html')
-
 
 page = _GET["page"]
 ifid = _GET["ifid"]
@@ -61,12 +64,18 @@ msg = ""
 local is_packet_interface = interface.isPacketInterface()
 local is_pcap_dump = interface.isPcapDumpInterface()
 
-local periodicity_stats = interface.periodicityStats()
+local periodicity_map = interface.periodicityMap()
+local service_map     = interface.serviceMap()
 local periodic_info_available = false
+local service_map_available = false
 local num_periodicity = 0
 
-if(periodicity_stats) then
-   num_periodicity = table.len(periodicity_stats)
+if(service_map and (table.len(service_map) > 0)) then
+   service_map_available = true
+end
+
+if(periodicity_map) then
+   num_periodicity = table.len(periodicity_map)
    if(num_periodicity > 0) then
       periodic_info_available = true
    end
@@ -343,15 +352,22 @@ page_utils.print_navbar(title, url,
 			      },
 			      {
 				 hidden = not periodic_info_available,
-				 active = page == "periodicity_stats",
-				 page_name = "periodicity_stats",
+				 active = page == "periodicity_map",
+				 page_name = "periodicity_map",
 				 label = "<i class=\"fas fa-lg fa-clock\"></i> <span style='position: absolute; top: 0' class=\"badge badge-pill badge-secondary\">"..num_periodicity.."</span>",
+			      },
+			      {
+				 hidden = not service_map_available,
+				 active = page == "service_map",
+				 page_name = "service_map",
+				 label = "<i class=\"fas fa-lg fa-concierge-bell\"></i>",
 			      },
 			   }
    )
 
 if((page == "overview") or (page == nil)) then
    local tags = {ifid = ifstats.id}
+   print("<div class='table-responsive'>")
    print("<table class=\"table table-striped table-bordered\">\n")
    print("<tr><th width=15%>"..i18n("if_stats_overview.id").."</th><td colspan=6>" .. ifstats.id .. " ")
    if(ifstats.description ~= ifstats.name) then print(" ("..ifstats.description..")") end
@@ -410,7 +426,7 @@ if((page == "overview") or (page == nil)) then
 	 end
 
 	 print("</th><td nowrap>" .. ifstats["probe.ip"])
-	 
+
 	 if not isEmptyString(ifstats["probe.public_ip"]) then
 	    print(" / <A HREF=\"http://"..ifstats["probe.public_ip"].."\">"..ifstats["probe.public_ip"].."</A> <i class='fas fa-external-link-alt'><i>")
 	 end
@@ -419,12 +435,22 @@ if((page == "overview") or (page == nil)) then
 	 cur_i = cur_i + 1
       end
 
+      if not isEmptyString(ifstats["remote_pps"]) or not isEmptyString(ifstats["remote_bps"]) then
+	 if cur_i >= max_items_per_row then print("</tr><tr>"); cur_i = 0 end
+
+	 print("<th nowrap>".. i18n("if_stats_overview.probe_throughput").."</th>")
+	 print('<td nowrap><span id="if_zmq_remote_bps">' .. format_utils.bitsToSize(ifstats["remote_bps"]) .. '</span>')
+	 print(' [<span id="if_zmq_remote_pps">' .. format_utils.pktsToSize(ifstats["remote_pps"]) .. '</span>]</td>')
+
+	 cur_i = cur_i + 1
+      end
+
       if ifstats["timeout.lifetime"] > 0 then
 	 if cur_i >= max_items_per_row then print("</tr><tr>"); cur_i = 0 end
 
 	 print("<th nowrap>"..i18n("if_stats_overview.probe_timeout_lifetime")..
-		  " <sup><i class='fas fa-info-circle' title='"..i18n("if_stats_overview.note_probe_zmq_timeout_lifetime").."'></i></sup></th><td nowrap>")
-	 
+		  " <sup><i class='fas fa-question-circle ' title='"..i18n("if_stats_overview.note_probe_zmq_timeout_lifetime").."'></i></sup></th><td nowrap>")
+
 	 if((ifstats["timeout.collected_lifetime"] ~= nil) and (ifstats["timeout.collected_lifetime"] > 0)) then
 	    -- We're in collector mode on the nProbe side
 	    print(" "..secondsToTime(ifstats["timeout.lifetime"]).." [".. i18n("if_stats_overview.remote_flow_lifetime")..": "..secondsToTime(ifstats["timeout.collected_lifetime"]).."]")
@@ -435,15 +461,25 @@ if((page == "overview") or (page == nil)) then
 	 print("</td>")
 	 cur_i = cur_i + 1
       end
+
       if ifstats["timeout.idle"] > 0 then
 	 if cur_i >= max_items_per_row then print("</tr><tr>"); cur_i = 0 end
 	 print("<th nowrap><b>"..i18n("if_stats_overview.probe_timeout_idle").."</th><td nowrap>"..secondsToTime(ifstats["timeout.idle"]).."</td>")
 	 cur_i = cur_i + 1
       end
 
-      if not isEmptyString(ifstats["zmq.num_exporters"]) then
+      if not isEmptyString(ifstats["probe.remote_time"]) then
+	 local tdiff = math.abs(os.time()-ifstats["probe.remote_time"])
 	 if cur_i >= max_items_per_row then print("</tr><tr>"); cur_i = 0 end
-	 print("<th nowrap>"..i18n("if_stats_overview.probe_zmq_num_endpoints").."</th><td nowrap><span id=if_num_remote_zmq_exporters>"..formatValue(ifstats["zmq.num_exporters"]).."</span></td>")
+	 print("<th nowrap>"..i18n("if_stats_overview.remote_probe_time")..
+		  " <sup><i class='fas fa-question-circle ' title='"..i18n("if_stats_overview.note_remote_probe_time").."'></i></sup>" ..
+		  "</th><td nowrap>")
+
+	 if(tdiff > 10) then print("<font color=red><b>") end
+	 print(formatValue(tdiff).." sec")
+	 if(tdiff > 10) then print("</b></font>") end
+
+	 print("</td>")
 	 cur_i = cur_i + 1
       end
 
@@ -453,41 +489,29 @@ if((page == "overview") or (page == nil)) then
       local has_remote_drops = (has_drops_export_queue_full or has_drops_flow_collection_drops)
 
       if has_drops_export_queue_full then
-	 local num_full = tonumber(ifstats["zmq.drops.export_queue_full"])
 	 local span_class = ' '
-	 if num_full > 0 then
-	    span_class = 'class="badge badge-danger"'
-	 end
 
 	 if cur_i >= max_items_per_row then print("</tr><tr>"); cur_i = 0 end
-	 print("<th nowrap>"..i18n("if_stats_overview.probe_zmq_drops_export_queue_full").." <sup><i class='fas fa-info-circle' title='"..i18n("if_stats_overview.note_probe_zmq_drops_export_queue_full").."'></i></sup></th>")
-	 print("<td nowrap><span "..span_class.." id=if_zmq_drops_export_queue_full>"..formatValue(ifstats["zmq.drops.export_queue_full"]).."</span></td>")
+	 print("<th nowrap>"..i18n("if_stats_overview.probe_zmq_drops_export_queue_full").." <sup><i class='fas fa-question-circle ' title='"..i18n("if_stats_overview.note_probe_zmq_drops_export_queue_full").."'></i></sup></th>")
+	 print("<td nowrap><span "..span_class.." id=if_zmq_drops_export_queue_full>"..formatValue(ifstats["zmq.drops.export_queue_full"]).."</span> <span id=if_zmq_drops_export_queue_full_trend></span></td>")
 	 cur_i = cur_i + 1
       end
 
       if has_drops_flow_collection_drops then
-	 local num_full = tonumber(ifstats["zmq.drops.flow_collection_drops"])
 	 local span_class = ' '
-	 if num_full > 0 then
-	    span_class = 'class="badge badge-danger"'
-	 end
 
 	 if cur_i >= max_items_per_row then print("</tr><tr>"); cur_i = 0 end
-	 print("<th nowrap>"..i18n("if_stats_overview.probe_zmq_drops_flow_collection_drops").." <sup><i class='fas fa-info-circle' title='"..i18n("if_stats_overview.note_probe_zmq_drops_flow_collection_drops").."'></i></sup></th>")
-	 print("<td nowrap><span "..span_class.." id=if_zmq_drops_flow_collection_drops>"..formatValue(ifstats["zmq.drops.flow_collection_drops"]).."</span></td>")
+	 print("<th nowrap>"..i18n("if_stats_overview.probe_zmq_drops_flow_collection_drops").." <sup><i class='fas fa-question-circle ' title='"..i18n("if_stats_overview.note_probe_zmq_drops_flow_collection_drops").."'></i></sup></th>")
+	 print("<td nowrap><span "..span_class.." id=if_zmq_drops_flow_collection_drops>"..formatValue(ifstats["zmq.drops.flow_collection_drops"]).."</span> <span id=if_zmq_drops_flow_collection_drops_trend></span></td>")
 	 cur_i = cur_i + 1
       end
 
       if has_drops_flow_collection_udp_socket_drops then
-	 local num_full = tonumber(ifstats["zmq.drops.flow_collection_udp_socket_drops"])
 	 local span_class = ' '
-	 if num_full > 0 then
-	    span_class = 'class="badge badge-danger"'
-	 end
 
 	 if cur_i >= max_items_per_row then print("</tr><tr>"); cur_i = 0 end
-	 print("<th nowrap>"..i18n("if_stats_overview.probe_zmq_drops_flow_collection_udp_socket_drops").." <sup><i class='fas fa-info-circle' title='"..i18n("if_stats_overview.note_probe_zmq_drops_flow_collection_udp_socket_drops").."'></i></sup></th>")
-	 print("<td nowrap><span "..span_class.." id=if_zmq_drops_flow_collection_udp_socket_drops>"..formatValue(ifstats["zmq.drops.flow_collection_udp_socket_drops"]).."</span></td>")
+	 print("<th nowrap>"..i18n("if_stats_overview.probe_zmq_drops_flow_collection_udp_socket_drops").." <sup><i class='fas fa-question-circle ' title='"..i18n("if_stats_overview.note_probe_zmq_drops_flow_collection_udp_socket_drops").."'></i></sup></th>")
+	 print("<td nowrap><span "..span_class.." id=if_zmq_drops_flow_collection_udp_socket_drops>"..formatValue(ifstats["zmq.drops.flow_collection_udp_socket_drops"]).."</span> <span id=if_zmq_drops_flow_collection_udp_socket_drops_trend></span></td>")
 	 cur_i = cur_i + 1
       end
 
@@ -534,13 +558,13 @@ if((page == "overview") or (page == nil)) then
       print("</small></ul></td></tr>\n")
    end
 
-   if is_physical_iface then
+   if is_physical_iface and not ifstats.isView then
       print("<tr>")
       print("<th>"..i18n("mtu").."</th><td colspan=2  nowrap>"..ifstats.mtu.." "..i18n("bytes").."</td>\n")
       local speed_key = 'ntopng.prefs.'..ifname..'.speed'
       local speed = ntop.getCache(speed_key)
       if (tonumber(speed) == nil) then
-	 speed = ifstats.speed
+	      speed = ifstats.speed
       end
       print("<th width=250>"..i18n("speed").."</th><td colspan=2>" .. bitsToSize(speed * 1000000) .. "</td>")
       print("</tr>")
@@ -553,7 +577,7 @@ if((page == "overview") or (page == nil)) then
       print("<th>".. ternary(ifstats.num_alerts_engaged > 0, warning, "") ..i18n("show_alerts.engaged_alerts")..
 	       ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=iface:alerts_stats'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th><td colspan=2  nowrap><a href='".. ntop.getHttpPrefix() .."/lua/show_alerts.lua?ifid="..ifstats.id.."'>".. formatValue(ifstats.num_alerts_engaged) .."</a> <span id=engaged_alerts_trend></span></td>\n")
       print("<th width=250>".. ternary(ifstats.num_dropped_alerts > 0, warning, "")..i18n("show_alerts.dropped_alerts")..
-	       " <i class='fas fa-sm fa-info-circle' title='".. i18n("if_stats_overview.dropped_alerts_info") .."'></i>"..
+	       " <i class='fas fa-sm fa-question-circle ' title='".. i18n("if_stats_overview.dropped_alerts_info") .."'></i>"..
 	       ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=iface:alerts_stats'><i class='fas fa-chart-area fa-sm'></i></A>", "")
 	       .."</th><td colspan=2><span id=dropped_alerts>" .. formatValue(ifstats.num_dropped_alerts) .. "</span> <span id=dropped_alerts_trend></span></td>\n</td>")
    end
@@ -588,16 +612,23 @@ if((page == "overview") or (page == nil)) then
    if(ifstats.zmqRecvStats ~= nil) then
       print("<tr><th colspan=7 nowrap>"..i18n("if_stats_overview.zmq_rx_statistics").."</th></tr>\n")
 
-      print("<tr><th nowrap>"..i18n("if_stats_overview.collected_flows")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=iface:zmq_recv_flows'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th><td width=20%><span id=if_zmq_flows>"..formatValue(ifstats.zmqRecvStats.flows).."</span></td>")
+      print("<tr>")
+      print("<th nowrap>"..i18n("if_stats_overview.collected_flows")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=iface:zmq_recv_flows'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th><td width=20%><span id=if_zmq_flows>"..formatValue(ifstats.zmqRecvStats.flows).."</span></td>")
+      print("<th nowrap> <i class='fas fa-tint' aria-hidden='true'></i> "..i18n("if_stats_overview.unhandled_flows").."</th><td width=20%><span id=if_zmq_dropped_flows>"..formatValue(ifstats.zmqRecvStats.dropped_flows).."</span></td>")
+      print("<th nowrap></th><td width=20%></td>")
+      print("</tr>")
 
-      print("<th nowrap>"..i18n("if_stats_overview.interface_rx_updates").."</th><td width=20%><span id=if_zmq_events>"..formatValue(ifstats.zmqRecvStats.events).."</span></td>")
-
-      print("<th nowrap>"..i18n("if_stats_overview.sflow_counter_updates").."</th><td width=20%><span id=if_zmq_counters>"..formatValue(ifstats.zmqRecvStats.counters).."</span></td></tr>")
-
-      print("<tr><th nowrap>"..i18n("if_stats_overview.zmq_message_rcvd")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=custom:zmq_msg_rcvd_vs_drops'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th><td width=20%><span id=if_zmq_msg_rcvd>"..formatValue(ifstats.zmqRecvStats.zmq_msg_rcvd).."</span></td>")
-
+      print("<tr>")
+      print("<th nowrap>"..i18n("if_stats_overview.zmq_message_rcvd")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=custom:zmq_msg_rcvd_vs_drops'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th><td width=20%><span id=if_zmq_msg_rcvd>"..formatValue(ifstats.zmqRecvStats.zmq_msg_rcvd).."</span></td>")
       print("<th nowrap> <i class='fas fa-tint' aria-hidden='true'></i> "..i18n("if_stats_overview.zmq_message_drops")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=custom:zmq_msg_rcvd_vs_drops'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th><td width=20%><span id=if_zmq_msg_drops>"..formatValue(ifstats.zmqRecvStats.zmq_msg_drops).."</span></td>")
-      print("<th nowrap> "..i18n("if_stats_overview.zmq_avg_msg_flows").."</th><td width=20%><span id=if_zmq_avg_msg_flows></span></td></tr>")
+      print("<th nowrap> "..i18n("if_stats_overview.zmq_avg_msg_flows").."</th><td width=20%><span id=if_zmq_avg_msg_flows></span></td>")
+      print("</tr>")
+
+      print("<tr>")
+      print("<th nowrap>"..i18n("if_stats_overview.interface_rx_updates").."</th><td width=20%><span id=if_zmq_events>"..formatValue(ifstats.zmqRecvStats.events).."</span></td>")
+      print("<th nowrap>"..i18n("if_stats_overview.sflow_counter_updates").."</th><td width=20%><span id=if_zmq_counters>"..formatValue(ifstats.zmqRecvStats.counters).."</span></td>")
+      print("<th nowrap></th><td width=20%></td>")
+      print("</tr>")
    end
 
    print("<tr><th colspan=7 nowrap>"..i18n("if_stats_overview.traffic_statistics").."</th></tr>\n")
@@ -645,7 +676,31 @@ if((page == "overview") or (page == nil)) then
       print("<th nowrap>"..i18n("http_page.traffic_received")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=iface:traffic_rxtx'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th><td width=20%><span id=if_in_bytes>"..bytesToSize(ifstats.eth.ingress.bytes).."</span> [<span id=if_in_pkts>".. formatValue(ifstats.eth.ingress.packets) .. " ".. label .."</span>] <span id=pkts_in_trend></span><td></td></tr>")
    end
 
-   if not interface.isPacketInterface() then
+   if interface.isSyslogInterface() then
+      -- Syslog Stats
+      print("<tr>")
+      print("<th colspan=7 nowrap>"..i18n("if_stats_overview.syslog_statistics").."</th>")
+      print("</tr>")
+
+      print("<tr>")
+      print("<th nowrap>"..i18n("if_stats_overview.collected_logs").."</th>")
+      print("<td><span id=syslog_tot_events>"..formatValue(ifstats.syslog.tot_events).."</span></td>")
+      print("<th>"..i18n("if_stats_overview.dispatched_logs").."</th>")
+      print("<td><span id=syslog_dispatched>"..formatValue(ifstats.syslog.dispatched).."</span></td>")
+      print("<th>"..i18n("if_stats_overview.unhandled_logs").."</th>")
+      print("<td><span id=syslog_unhandled>"..formatValue(ifstats.syslog.unhandled).."</span></td>")
+      print("</tr>")
+
+      print("<tr>")
+      print("<th nowrap>"..i18n("if_stats_overview.malformed_logs").."</th>")
+      print("<td><span id=syslog_malformed>"..formatValue(ifstats.syslog.malformed).."</span></td>")
+      print("<th>"..i18n("if_stats_overview.host_correlations").."</th>")
+      print("<td><span id=syslog_host_correlations>"..formatValue(ifstats.syslog.host_correlations).."</span></td>")
+      print("<th>"..i18n("if_stats_overview.alert_events").."</th>")
+      print("<td><span id=syslog_alerts>"..formatValue(ifstats.syslog.alerts).."</span></td>")
+      print("</tr>")
+
+      -- Additional stats (e.g. Suricata)
       local external_json_stats = ntop.getCache("ntopng.prefs.ifid_"..tostring(ifid)..".external_stats")
       if not isEmptyString(external_json_stats) then
          local external_stats = json.decode(external_json_stats)
@@ -682,15 +737,22 @@ if((page == "overview") or (page == nil)) then
       local export_rate      = ifstats.stats.flow_export_rate
       local export_drops     = ifstats.stats.flow_export_drops
       local export_drops_pct = 0
-      if export_drops == nill then
 
+      if not export_drops or not export_count then
+	 -- Nothing to do
       elseif export_drops > 0 and export_count > 0 then
-	 export_drops_pct = export_drops / export_count * 100
+	 export_drops_pct = export_drops / (export_count + export_drops) * 100
       elseif export_drops > 0 then
 	 export_drops_pct = 100
       end
 
-      print("<tr><th colspan=7 nowrap>"..dump_to.." "..i18n("if_stats_overview.flows_export_statistics").."</th></tr>\n")
+      print("<tr><th colspan=7 nowrap>")
+      if prefs.is_dump_flows_runtime_enabled then
+         print(dump_to.." "..i18n("if_stats_overview.flows_export_statistics"))
+      else
+         print(i18n("if_stats_overview.export_disabled"))
+      end
+      print("</th></tr>\n")
 
       print("<tr>")
       print("<th nowrap>"..i18n("if_stats_overview.exported_flows")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=iface:dumped_flows'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th>")
@@ -698,22 +760,28 @@ if((page == "overview") or (page == nil)) then
       if export_rate == nil then
 	 export_rate = 0
       end
-      print("&nbsp;[<span id=exported_flows_rate>"..formatValue(round(export_rate, 2)).."</span> Flows/s]</td>")
+      print("&nbsp;[<span id=exported_flows_rate>"..formatValue(round(export_rate, 2)).." fps</span>]</td>")
 
       print("<th><span id='if_flow_drops_drop'<i class='fas fa-tint' aria-hidden='true'></i></span> ")
       print(i18n("if_stats_overview.dropped_flows")..ternary(charts_available, " <A HREF='"..url.."&page=historical&ts_schema=iface:dumped_flows'><i class='fas fa-chart-area fa-sm'></i></A>", "").."</th>")
 
       local span_danger = ""
-      if export_drops == nil then
-
-
-      elseif(export_drops > 0) then
+      if not export_drops then
+      elseif export_drops > 0 then
 	 span_danger = ' class="badge badge-danger"'
       end
+
       print("<td><span id=exported_flows_drops "..span_danger..">"..formatValue(export_drops).."</span>&nbsp;")
       print("<span id=exported_flows_drops_pct "..span_danger..">["
 	       ..formatValue(round(export_drops_pct, 2)).."%]</span></td>")
-      print("<td colspan=3>&nbsp;</td>")
+
+      if not interface.isPacketInterface() then
+         print("<th nowrap>"..i18n("if_stats_overview.direct_mode").."</th>")
+         print("<td>"..ternary(prefs.is_dump_flows_direct_enabled, i18n("enabled"), i18n("disabled")).."</td>")
+      else
+         print("<td colspan=2></td>")
+      end
+
       print("</tr>")
    end
 
@@ -774,7 +842,7 @@ if((page == "overview") or (page == nil)) then
       print("<tr><th>"..i18n("download").."&nbsp;<i class=\"fas fa-download fa-lg\"></i></th><td colspan=2>")
 
       local live_traffic_utils = require("live_traffic_utils")
-      live_traffic_utils.printLiveTrafficForm(ifId)
+      live_traffic_utils.printLiveTrafficForm(interface.getId())
 
       print("</td><td colspan=3></td></tr>\n")
    end
@@ -821,8 +889,10 @@ if((page == "overview") or (page == nil)) then
    ]]
 
    print("</table>\n")
+   print("</div>")
 
 elseif page == "networks" and interface.isPacketInterface() then
+   print("<div class='table-responsive'>")
    print("<table class=\"table table-striped table-bordered\">")
 
    if(ifstats.ip_addresses ~= "") then
@@ -877,19 +947,18 @@ elseif page == "networks" and interface.isPacketInterface() then
       print("</td></tr>")
    end
    print("</table>")
+   print("</div>")
 
-   print("<p><b>"..i18n("if_stats_overview.note").."</b>:<ul>")
-   print("<li>"..i18n("if_stats_networks.note_iface_addresses").."</li>")
-   print("<li>"..i18n("if_stats_networks.note_iface_bcast_domains").."</li>")
-
-   if has_ghost_networks then
-      print("<li>"..i18n("if_stats_networks.note_ghost_bcast_domains", {ghost_icon = ghost_icon}).."</li>")
-   end
-   print("</ul>")
+   print(ui_utils.render_notes({
+      {content = i18n("if_stats_networks.note_iface_addresses")},
+      {content = i18n("if_stats_networks.note_iface_bcast_domains")},
+      {content = i18n("if_stats_networks.note_ghost_bcast_domains", {ghost_icon = ghost_icon}), hidden = not has_ghost_networks}
+   }))
 
 elseif((page == "packets")) then
    local nedge_hidden = ternary(have_nedge, 'class="hidden"', '')
 
+   print("<div class='table-responsive'>")
    print [[ <table class="table table-bordered table-striped"> ]]
    print("<tr " .. nedge_hidden .. "><th width=30% rowspan=3>" .. i18n("packets_page.tcp_packets_analysis") .. "</th><th>" .. i18n("packets_page.retransmissions") .."</th><td align=right><span id=pkt_retransmissions>".. formatPackets(ifstats.tcpPacketStats.retransmissions) .."</span> <span id=pkt_retransmissions_trend></span></td></tr>\n")
    print("<tr " .. nedge_hidden .. "></th><th>" .. i18n("packets_page.out_of_order") .. "</th><td align=right><span id=pkt_ooo>".. formatPackets(ifstats.tcpPacketStats.out_of_order) .."</span> <span id=pkt_ooo_trend></span></td></tr>\n")
@@ -903,6 +972,7 @@ elseif((page == "packets")) then
   	 <tr ]] print(nedge_hidden) print[[><th class="text-left">]] print(i18n("packets_page.version_vs_flags_distribution")) print[[</th>
 <td colspan=1><div class="pie-chart" id="ipverDistro"></div></td><td colspan=1><div class="pie-chart" id="flagsDistro"></div></td></tr>
       </table>
+   </div>
 
 	<script type='text/javascript'>
 	 window.onload=function() {
@@ -930,6 +1000,7 @@ elseif((page == "packets")) then
   ]]
 elseif(page == "DSCP") then
 
+   print("<div class='table-responsive'>")
   print [[
      <table id="dscp_table" class="table table-bordered table-striped tablesorter">
         <tr>
@@ -937,7 +1008,7 @@ elseif(page == "DSCP") then
           <td colspan=4><div class="pie-chart" id="dscpGroups"></td>
         </tr>
      </table>
-
+   </div>
 <script>
  do_pie("#dscpGroups", ']] print (ntop.getHttpPrefix()) print [[/lua/rest/v1/get/interface/dscp/stats.lua', { ifid: "]] print(ifid) print [[" }, "", refresh);
 </script>
@@ -946,13 +1017,17 @@ elseif(page == "DSCP") then
 
 elseif(page == "ndpi") then
 print[[
-  <ul id="ndpiNav" class="nav nav-tabs" role="tablist">
+   <div class='card'>
+   <div class='card-header'>
+  <ul id="ndpiNav" class="nav nav-tabs card-header-tabs" role="tablist">
     <li class="nav-item active"><a class="nav-link active" data-toggle="tab" role="tab" href="#applications" active>]] print(i18n("applications")) print[[</a></li>
     <li class="nav-item"><a class="nav-link" data-toggle="tab" role="tab" href="#categories">]] print(i18n("categories")) print[[</a></li>
   </ul>
-  <div class="tab-content">
+  </div>
+  <div class='card-body tab-content'>
     <div id="applications" class="tab-pane in active">
-      <br>
+
+    <div class='table-responsive'>
       <table class="table table-bordered table-striped">
 ]]
 
@@ -979,6 +1054,7 @@ print[[
           </td>
         </tr>
       </table>
+      </div>
      <table id="if_stats_ndpi" class="table table-bordered table-striped tablesorter">
        <thead>
          <tr>
@@ -991,7 +1067,6 @@ print[[
      </table>
     </div>
     <div id="categories" class="tab-pane">
-      <br>
       <table class="table table-bordered table-striped">
         <tr>
           <th class="text-left">]] print(i18n("ndpi_page.overview", {what = i18n("categories")})) print [[</th>
@@ -1002,6 +1077,7 @@ print[[
        <thead>
          <tr>
            <th>]] print(i18n("category")) print[[</th>
+           <th>]] print(i18n("applications")) print[[</th>
            <th>]] print(i18n("ndpi_page.total_since_startup")) print[[</th>
            <th>]] print(i18n("percentage")) print[[</th>
          </tr>
@@ -1009,6 +1085,9 @@ print[[
        <tbody id="if_stats_ndpi_categories_tbody"></tbody>
      </table>
     </div>
+    </div>
+    </div>
+
 ]]
 
 print [[
@@ -1087,26 +1166,33 @@ setInterval(update_ndpi_categories_table, 5000);
 
 elseif(page == "ICMP") then
 print[[
-  <ul id="icmp_nav" class="nav nav-tabs" role="tablist">
-    <li class="nav-item active"><a class="nav-link active" data-toggle="tab" role="tab" href="#icmp" active>]] print(i18n("icmp")) print[[</a></li>
-    <li class="nav-item"><a class="nav-link" data-toggle="tab" role="tab" href="#icmpv6">]] print(i18n("icmp")) print[[V6</a></li>
+  <div class='card'>
+   <div class='card-header'>
+  <ul id="icmp_nav" class="nav nav-tabs card-header-tabs" role="tablist">
+    <li class="nav-item active"><a class="nav-link active" data-toggle="tab" role="tab" href="#icmp" active>]] print(i18n("icmpv4")) print[[</a></li>
+    <li class="nav-item"><a class="nav-link" data-toggle="tab" role="tab" href="#icmpv6">]] print(i18n("icmpv6")) print[[</a></li>
   </ul>
-  <div class="tab-content">
+  </div>
+  <div class="card-body tab-content">
     <div id="icmp" class="tab-pane in active">
-      <br>
+      <div class='table-responsive'>
        <table id="icmp_table_4" class="table table-bordered table-striped tablesorter">
          <thead><tr><th>]] print(i18n("icmp_page.icmp_message")) print [[</th><th>]] print(i18n("icmp_page.icmp_type")) print [[</th><th>]] print(i18n("icmp_page.icmp_code")) print [[</th><th style='text-align:right;'>]] print(i18n("packets")) print[[</th></tr></thead>
          <tbody id="iface_details_icmp_tbody_4">
          </tbody>
        </table>
+       </div>
     </div>
     <div id="icmpv6" class="tab-pane">
-      <br>
+      <div class='table-responsive'>
        <table id="icmp_table_6" class="table table-bordered table-striped tablesorter">
          <thead><tr><th>]] print(i18n("icmp_page.icmp_message")) print [[</th><th>]] print(i18n("icmp_page.icmp_type")) print [[</th><th>]] print(i18n("icmp_page.icmp_code")) print [[</th><th style='text-align:right;'>]] print(i18n("packets")) print[[</th></tr></thead>
          <tbody id="iface_details_icmp_tbody_6">
          </tbody>
        </table>
+      </div>
+    </div>
+    </div>
     </div>
 
 <script>
@@ -1119,7 +1205,7 @@ function update_icmp_table(ip_version) {
     url: ']]
   print(ntop.getHttpPrefix())
   print [[/lua/get_icmp_data.lua',
-    data: { ifid: "]] print(ifId.."")  print [[", version: ip_version },
+    data: { ifid: "]] print(interface.getId().."")  print [[", version: ip_version },
     success: function(content) {
       if(content) {
          $(icmp_table_body_id).html(content);
@@ -1142,11 +1228,13 @@ setInterval(update_icmp_tables, 5000);
 elseif(page == "ARP") then
 
   print [[
-     <table id="arp_table" class="table table-bordered table-striped tablesorter">
-     <thead><tr><th>]] print(i18n("arp_page.arp_type")) print [[</th><th style='text-align:right;'>]] print(i18n("packets")) print[[</th></tr></thead>
-     <tbody id="iface_details_arp_tbody">
-     </tbody>
-     </table>
+     <div class='table-responsive'>
+      <table id="arp_table" class="table table-bordered table-striped tablesorter">
+      <thead><tr><th>]] print(i18n("arp_page.arp_type")) print [[</th><th style='text-align:right;'>]] print(i18n("packets")) print[[</th></tr></thead>
+      <tbody id="iface_details_arp_tbody">
+      </tbody>
+      </table>
+     </div>
 
 <script>
 function update_arp_table() {
@@ -1155,7 +1243,7 @@ function update_arp_table() {
     url: ']]
   print(ntop.getHttpPrefix())
   print [[/lua/get_arp_data.lua',
-    data: { ifid: "]] print(ifId.."")  print [[" },
+    data: { ifid: "]] print(interface.getId().."")  print [[" },
     success: function(content) {
       if(content) {
          $('#iface_details_arp_tbody').html(content);
@@ -1197,6 +1285,8 @@ elseif(page == "historical") then
       timeseries = graph_utils.get_default_timeseries()
    })
 elseif(page == "trafficprofiles") then
+
+   print("<div class='table-responsive'>")
    print("<table class=\"table table-striped table-bordered\">\n")
    print("<tr><th width=15%><a href=\""..ntop.getHttpPrefix().."/lua/pro/admin/edit_profiles.lua\">" .. i18n("traffic_profiles.profile_name") .. "</A></th><th width=5%>" .. i18n("chart") .. "</th><th>" .. i18n("traffic") .. "</th></tr>\n")
    for pname,pbytes in pairs(ifstats.profiles) do
@@ -1212,7 +1302,7 @@ elseif(page == "trafficprofiles") then
 
 print [[
    </table>
-
+   </div>
    <script>
    let last_profile = [];
    const traffic_profiles_interval = window.setInterval(function() {
@@ -1229,11 +1319,11 @@ print [[
 			   for (key in profiles["profiles"]) {
 			     let k = '#profile_'+key.replace(" ", "");
 			     const v = profiles["profiles"][key];
-			     $(k).html(bytesToVolume(v));
+			     $(k).html(NtopUtils.bytesToVolume(v));
 			     k += "_trend";
 			     let last = last_profile[key];
 			     if(last == null) { last = 0; }
-			     $(k).html(get_trend(last, v));
+			     $(k).html(NtopUtils.get_trend(last, v));
 			   }
 
 			   last_profile = profiles["profiles"];
@@ -1316,9 +1406,8 @@ elseif(page == "traffic_recording" and has_traffic_recording_page) then
 
    print('</div></div>')
 elseif(page == "alerts") then
-
    alert_utils.printAlertTables("interface", ifid,
-      "if_stats.lua", {ifid=ifid}, if_name, "interface",
+      "if_stats.lua", {ifid=ifid}, if_name,
       {enable_label = i18n("show_alerts.trigger_iface_alert_descr", {iface = short_name})})
 
 elseif(page == "config") then
@@ -1326,12 +1415,13 @@ elseif(page == "config") then
       return
    end
 
+   local interface_pools_instance = interface_pools:create()
    local messages = {}
 
    -- Flow dump check
    local interface_flow_dump = true
    if prefs.is_dump_flows_enabled then
-      interface_flow_dump = (ntop.getPref("ntopng.prefs.ifid_"..ifId..".is_flow_dump_disabled") ~= "1")
+      interface_flow_dump = (ntop.getPref("ntopng.prefs.ifid_"..interface.getId()..".is_flow_dump_disabled") ~= "1")
 
       if _SERVER["REQUEST_METHOD"] == "POST" then
          local new_value = (_POST["interface_flow_dump"] == "1")
@@ -1339,13 +1429,20 @@ elseif(page == "config") then
          if new_value ~= interface_flow_dump then
             -- Value changed
             interface_flow_dump = new_value
-            ntop.setPref("ntopng.prefs.ifid_"..ifId..".is_flow_dump_disabled", ternary(interface_flow_dump, "0", "1"))
+            ntop.setPref("ntopng.prefs.ifid_"..interface.getId()..".is_flow_dump_disabled", ternary(interface_flow_dump, "0", "1"))
 
             messages[#messages + 1] = {
              type = "warning",
              text = i18n("prefs.restart_needed", {product=info.product}),
            }
          end
+      end
+   end
+
+   if _SERVER["REQUEST_METHOD"] == "POST" then
+      -- bind interface to pool
+      if (_POST["pool"]) then
+         interface_pools_instance:bind_member(ifid, tonumber(_POST["pool"]))
       end
    end
 
@@ -1357,6 +1454,7 @@ elseif(page == "config") then
    print[[
    <form id="iface_config" lass="form-inline" method="post">
    <input name="csrf" type="hidden" value="]] print(ntop.getRandomCSRFValue()) print[[" />
+   <div class='table-responsive'>
    <table id="iface_config_table" class="table table-bordered table-striped">]]
 
    if ((not is_pcap_dump) and
@@ -1374,6 +1472,16 @@ elseif(page == "config") then
       print[[
          </td>
       </tr>]]
+
+      -- Interface Pool
+      print([[
+         <tr>
+            <th>]].. i18n("pools.pool") ..[[</th>
+            <td>
+               ]].. ui_utils.render_pools_dropdown(interface_pools_instance, ifid, "interface") ..[[
+            </td>
+         </tr>
+      ]])
 
       -- Interface speed
       if not have_nedge then
@@ -1424,7 +1532,7 @@ elseif(page == "config") then
    end
 
    local serialize_by_mac
-   local serialize_by_mac_key = string.format("ntopng.prefs.ifid_%u.serialize_local_broadcast_hosts_as_macs", ifId)
+   local serialize_by_mac_key = string.format("ntopng.prefs.ifid_%u.serialize_local_broadcast_hosts_as_macs", interface.getId())
 
    if(_POST["lbd_hosts_as_macs"] ~= nil) then
       serialize_by_mac = _POST["lbd_hosts_as_macs"]
@@ -1440,7 +1548,7 @@ elseif(page == "config") then
    -- LBD identifier
      print[[
 	<tr>
-	   <th width="30%">]] print(i18n("prefs.toggle_host_tskey_title")) print[[ <i class="fas fa-info-circle" title="]] print(i18n("prefs.toggle_host_tskey_description")) print[["></i></th>
+	   <th width="30%">]] print(i18n("prefs.toggle_host_tskey_title")) print[[ <i class="fas fa-question-circle " title="]] print(i18n("prefs.toggle_host_tskey_description")) print[["></i></th>
 	   <td>]]
       inline_select_form("lbd_hosts_as_macs", {i18n("ip_address"), i18n("mac_address")}, {"0", "1"}, serialize_by_mac)
 	print[[
@@ -1475,12 +1583,12 @@ elseif(page == "config") then
    if _SERVER["REQUEST_METHOD"] == "POST" then
       if _POST["interface_top_talkers_creation"] ~= "1" then
 	 interface_top_talkers_creation = false
-	 top_talkers_utils.disableTop(ifId)
+	 top_talkers_utils.disableTop(interface.getId())
       else
-	 top_talkers_utils.enableTop(ifId)
+	 top_talkers_utils.enableTop(interface.getId())
       end
    else
-      if not top_talkers_utils.areTopEnabled(ifId) then
+      if not top_talkers_utils.areTopEnabled(interface.getId()) then
 	 interface_top_talkers_creation = false
       end
    end
@@ -1517,7 +1625,7 @@ elseif(page == "config") then
    -- Mirrored Traffic
    if not ntop.isnEdge() and interface.isPacketInterface() then
       local is_mirrored_traffic = false
-      local is_mirrored_traffic_pref = string.format("ntopng.prefs.ifid_%d.is_traffic_mirrored", ifId)
+      local is_mirrored_traffic_pref = string.format("ntopng.prefs.ifid_%d.is_traffic_mirrored", interface.getId())
 
       if _SERVER["REQUEST_METHOD"] == "POST" then
 	 if _POST["is_mirrored_traffic"] == "1" then
@@ -1548,7 +1656,7 @@ elseif(page == "config") then
    -- Flows-Only Interface
    if not ntop.isnEdge() and not interface.isView() and not interface.isViewed() then
       local flows_only_interface = false
-      local flows_only_interface_pref = string.format("ntopng.prefs.ifid_%d.flows_only_interface", ifId)
+      local flows_only_interface_pref = string.format("ntopng.prefs.ifid_%d.flows_only_interface", interface.getId())
 
       if _SERVER["REQUEST_METHOD"] == "POST" then
 	 if _POST["flows_only_interface"] == "1" then
@@ -1579,7 +1687,7 @@ elseif(page == "config") then
    -- Discard Probing Traffic
    if not ntop.isnEdge() and not interface.isPacketInterface() then
       local discard_probing_traffic = false
-      local discard_probing_traffic_pref = string.format("ntopng.prefs.ifid_%d.discard_probing_traffic", ifId)
+      local discard_probing_traffic_pref = string.format("ntopng.prefs.ifid_%d.discard_probing_traffic", interface.getId())
 
       if _SERVER["REQUEST_METHOD"] == "POST" then
 	 if _POST["discard_probing_traffic"] == "1" then
@@ -1618,9 +1726,9 @@ elseif(page == "config") then
 	    interface_network_discovery = false
 	 end
 
-	 ntop.setPref(discover.getInterfaceNetworkDiscoveryEnabledKey(ifId), tostring(interface_network_discovery))
+	 ntop.setPref(discover.getInterfaceNetworkDiscoveryEnabledKey(interface.getId()), tostring(interface_network_discovery))
       else
-	 interface_network_discovery = ntop.getPref(discover.getInterfaceNetworkDiscoveryEnabledKey(ifId))
+	 interface_network_discovery = ntop.getPref(discover.getInterfaceNetworkDiscoveryEnabledKey(interface.getId()))
 
 	 if interface_network_discovery == "false" then
 	    interface_network_discovery = false
@@ -1714,9 +1822,10 @@ elseif(page == "config") then
 	i18n("prefs.none"),
 	i18n("prefs.vlan"),
 	i18n("prefs.probe_ip_address"),
-	i18n("prefs.flow_interface"),
+	i18n("prefs.ingress_egress_flow_interface"),
 	i18n("prefs.ingress_flow_interface"),
-	i18n("prefs.ingress_vrf_id")
+	i18n("prefs.ingress_vrf_id"),
+	i18n("prefs.probe_ip_and_ingress_iface_idx")
       }
 
       local values = {}
@@ -1732,7 +1841,8 @@ elseif(page == "config") then
 	  "probe_ip",
 	  "iface_idx",
 	  "ingress_iface_idx",
-	  "ingress_vrf_id"
+	  "ingress_vrf_id",
+	  "probe_ip_and_ingress_iface_idx",
         }
       end
 
@@ -1749,24 +1859,33 @@ elseif(page == "config") then
 
 	 print[[
 	   </select>
-	  ]]
-         print ("<br><br><small><p><b>"..i18n("notes").."</b><ul>"..
-		"<li>"..i18n("prefs.dynamic_interfaces_creation_description").."</li>"..
-		"<li>"..i18n("prefs.dynamic_interfaces_creation_note_0").."</li>"..
-		"<li>"..i18n("prefs.dynamic_interfaces_creation_note_4").."</li>"..
-		"<li>"..i18n("prefs.dynamic_interfaces_creation_note_1").."</li>")
-         if not is_packet_interface then
-            print("<li>"..i18n("prefs.dynamic_interfaces_creation_note_2").."</li>"..
-		  "<li>"..i18n("prefs.dynamic_interfaces_creation_note_3").."</li>")
-         end
-         print [[
-           </ul></small>
+     ]]
+
+     print([[
+        <small>
+        <details class='mt-2'>
+         <summary>
+            <span data-toggle="tooltip" data-placement="right" title=']].. i18n("click_to_expand") ..[['>
+               ]]..i18n("notes")..[[ <i class='fas fa-question-circle '></i>
+            </span>
+         </summary>
+         <p>]]..i18n("prefs.dynamic_interfaces_creation_description")..[[</p>
+         <p>]]..i18n("prefs.dynamic_interfaces_creation_note_0")..[[</p>
+         <p>]]..i18n("prefs.dynamic_interfaces_creation_note_4")..[[</p>
+         <p>]]..i18n("prefs.dynamic_interfaces_creation_note_1")..[[</p>
+         <p>]]..(not is_packet_interface and i18n("prefs.dynamic_interfaces_creation_note_2") or '') ..[[</p>
+         <p>]]..(not is_packet_interface and i18n("prefs.dynamic_interfaces_creation_note_3") or '') ..[[</p>
+        </details>
+        </small>
+     ]])
+
+    print[[
 	 </td>
        </tr>]]
 
       -- Show dynamic traffic in the master interface
       local show_dyn_iface_traffic = false
-      local show_dyn_iface_traffic_pref = string.format("ntopng.prefs.ifid_%d.show_dynamic_interface_traffic", ifId)
+      local show_dyn_iface_traffic_pref = string.format("ntopng.prefs.ifid_%d.show_dynamic_interface_traffic", interface.getId())
 
       if _SERVER["REQUEST_METHOD"] == "POST" then
 	 if _POST["show_dyn_iface_traffic"] == "1" then
@@ -1781,15 +1900,17 @@ elseif(page == "config") then
       end
 
       print [[<tr>
-	 <th>]] print(i18n("if_stats_config.show_dyn_iface_traffic")) print[[</th>
+    <th>
+    ]] print(i18n("if_stats_config.show_dyn_iface_traffic")) print[[
+       <i class='fas fa-question-circle ' data-toggle="tooltip" data-placement="top" title=']] print(i18n("if_stats_config.show_dyn_iface_traffic_note")) print[['></i>
+    </th>
     <td>]]
 
       print(template.gen("on_off_switch.html", {
 	 id = "show_dyn_iface_traffic",
 	 checked = show_dyn_iface_traffic,
        }))
-         
-      print[[<br><br><small><p><b>]] print(i18n("notes")) print [[</b><ul><li>]] print(i18n("if_stats_config.show_dyn_iface_traffic_note")) print [[</li></ul></p></small>
+       print[[
 	 </td>
       </tr>]]
 
@@ -1797,6 +1918,7 @@ elseif(page == "config") then
 
       print[[
    </table>
+   </div>
    <button class="btn btn-primary" style="float:right; margin-right:1em; margin-left: auto" disabled="disabled" type="submit">]] print(i18n("save_settings")) print[[</button><br><br>
    </form>
    <script>
@@ -1804,7 +1926,7 @@ elseif(page == "config") then
    </script>]]
 
 elseif(page == "internals") then
-   internals_utils.printInternals(ifid, true --[[ hash tables ]], true --[[ periodic activities ]], true --[[ user scripts]])
+   internals_utils.printInternals(ifid, true --[[ hash tables ]], true --[[ periodic activities ]], false --[[ user scripts]], true --[[ queues --]])
 print [[
    </table>
 ]]
@@ -1834,6 +1956,7 @@ elseif(page == "snmp_bind") then
 
    print[[
 <form id="snmp_bind_form" method="post" style="margin-bottom:3em;">
+<div class='table-responsive'>
    <table class="table table-bordered table-striped">]]
 
    print[[
@@ -1879,7 +2002,7 @@ elseif(page == "snmp_bind") then
             </td>
       </tr>
    </table>
-
+   </div>
    <input type="hidden" name="csrf" value="]] print(ntop.getRandomCSRFValue()) print[[" />
    <button id="snmp_bind_submit" class="btn btn-primary" style="float:right; margin-right:1em; margin-left: auto" disabled="disabled" type="submit">]] print(i18n("save_settings")) print[[</button>
 </form>
@@ -1979,8 +2102,10 @@ elseif(page == "unassigned_pool_devices") then
    dofile(dirs.installdir .. "/scripts/lua/unknown_devices.lua")
 elseif(page == "dhcp") then
     dofile(dirs.installdir .. "/scripts/lua/admin/dhcp.lua")
-elseif page == "periodicity_stats" then
-      dofile(dirs.installdir .. "/scripts/lua/inc/periodicity_stats.lua")
+elseif page == "periodicity_map" then
+      dofile(dirs.installdir .. "/scripts/lua/inc/periodicity_map.lua")
+elseif page == "service_map" then
+      dofile(dirs.installdir .. "/scripts/lua/inc/service_map.lua")
 elseif page == "traffic_report" then
    dofile(dirs.installdir .. "/pro/scripts/lua/enterprise/traffic_report.lua")
 end
@@ -1995,11 +2120,17 @@ print("var last_dropped_alerts = " .. ifstats.num_dropped_alerts .. ";\n")
 
 if(ifstats.zmqRecvStats ~= nil) then
    print("var last_zmq_time = 0;\n")
+   print("var last_zmq_remote_bps = ".. ifstats.remote_bps .. ";\n")
+   print("var last_zmq_remote_pps = ".. ifstats.remote_pps .. ";\n")
    print("var last_zmq_flows = ".. ifstats.zmqRecvStats.flows .. ";\n")
+   print("var last_zmq_dropped_flows = ".. ifstats.zmqRecvStats.dropped_flows .. ";\n")
    print("var last_zmq_events = ".. ifstats.zmqRecvStats.events .. ";\n")
    print("var last_zmq_counters = ".. ifstats.zmqRecvStats.counters .. ";\n")
    print("var last_zmq_msg_drops = ".. ifstats.zmqRecvStats.zmq_msg_drops .. ";\n")
    print("var last_zmq_msg_rcvd = ".. ifstats.zmqRecvStats.zmq_msg_rcvd .. ";\n")
+   print("var last_zmq_drops_export_queue_full = "..(ifstats["zmq.drops.export_queue_full"] or 0).. ";\n")
+   print("var last_zmq_drops_flow_collection_drops = "..(ifstats["zmq.drops.flow_collection_drops"] or 0) .. ";\n")
+   print("var last_zmq_drops_flow_collection_udp_socket_drops = ".. (ifstats["zmq.drops.flow_collection_udp_socket_drops"] or 0) .. ";\n")
    print("var last_zmq_avg_msg_flows = 1;\n")
 
    print("var last_probe_zmq_exported_flows = ".. (ifstats["zmq.num_flow_exports"] or 0) .. ";\n")
@@ -2040,20 +2171,20 @@ print [[/lua/rest/v1/get/interface/data.lua',
         }
 
         const rsp = content["rsp"];
-	const v = bytesToVolume(rsp.bytes);
+	const v = NtopUtils.bytesToVolume(rsp.bytes);
 	$('#if_bytes').html(v);
 
-   $('#if_in_bytes').html(bytesToVolume(rsp.bytes_download));
-	$('#if_out_bytes').html(bytesToVolume(rsp.bytes_upload));
-   $('#if_in_pkts').html(addCommas(rsp.packets_download) + " Pkts");
-	$('#if_out_pkts').html(addCommas(rsp.packets_upload)  + " Pkts");
-   $('#pkts_in_trend').html(get_trend(last_in_pkts, rsp.bytes_download));
-   $('#pkts_out_trend').html(get_trend(last_out_pkts, rsp.bytes_upload));
-   last_in_pkts = rsp.bytes_download;
-   last_out_pkts = rsp.bytes_upload;
+	$('#if_in_bytes').html(NtopUtils.bytesToVolume(rsp.bytes_download));
+	$('#if_out_bytes').html(NtopUtils.bytesToVolume(rsp.bytes_upload));
+	$('#if_in_pkts').html(NtopUtils.addCommas(rsp.packets_download) + " Pkts");
+	$('#if_out_pkts').html(NtopUtils.addCommas(rsp.packets_upload)  + " Pkts");
+	$('#pkts_in_trend').html(NtopUtils.get_trend(rsp.bytes_download, last_in_pkts));
+	$('#pkts_out_trend').html(NtopUtils.get_trend(rsp.bytes_upload, last_out_pkts));
+	last_in_pkts = rsp.bytes_download;
+	last_out_pkts = rsp.bytes_upload;
 
         if (typeof rsp.zmqRecvStats !== 'undefined') {
-           var diff, time_diff, label;
+           var diff, time_diff, flows_label;
            var now = (new Date()).getTime();
 
            if(last_zmq_time > 0) {
@@ -2062,32 +2193,45 @@ print [[/lua/rest/v1/get/interface/data.lua',
 
               if(diff > 0) {
                  rate = ((diff * 1000)/time_diff).toFixed(1);
-                 label = " [" + fflows(rate) + "] " + get_trend(1,0);
+                 flows_label = " [" + NtopUtils.fflows(rate) + "] " + NtopUtils.get_trend(1,0);
               } else {
-                 label = " "+get_trend(0,0);
+                 flows_label = " "+NtopUtils.get_trend(0,0);
               }
            } else {
-              label = " "+get_trend(0,0);
+              flows_label = " "+NtopUtils.get_trend(0,0);
            }
-           $('#if_zmq_flows').html(addCommas(rsp.zmqRecvStats.flows)+label);
-           $('#if_zmq_events').html(addCommas(rsp.zmqRecvStats.events)+" "+get_trend(rsp.zmqRecvStats.events, last_zmq_events));
-           $('#if_zmq_counters').html(addCommas(rsp.zmqRecvStats.counters)+" "+get_trend(rsp.zmqRecvStats.counters, last_zmq_counters));
-           $('#if_zmq_msg_drops').html(addCommas(rsp.zmqRecvStats.zmq_msg_drops)+" "+get_trend(rsp.zmqRecvStats.zmq_msg_drops, last_zmq_msg_drops));
-           $('#if_zmq_msg_rcvd').html(addCommas(rsp.zmqRecvStats.zmq_msg_rcvd)+" "+get_trend(rsp.zmqRecvStats.zmq_msg_rcvd, last_zmq_msg_rcvd));
-           $('#if_zmq_avg_msg_flows').html(addCommas(formatValue(rsp.zmqRecvStats.zmq_avg_msg_flows)));
-           $('#if_num_remote_zmq_flow_exports').html(addCommas(rsp["zmq.num_flow_exports"])+" "+get_trend(rsp["zmq.num_flow_exports"], last_probe_zmq_exported_flows));
 
+           $('#if_zmq_remote_bps').html(NtopUtils.bitsToSize(rsp.remote_bps) + " " + NtopUtils.get_trend(rsp.remote_bps, last_zmq_remote_bps));
+           $('#if_zmq_remote_pps').html(NtopUtils.fpackets(rsp.remote_pps) + " " + NtopUtils.get_trend(rsp.remote_pps, last_zmq_remote_pps));
+           $('#if_zmq_flows').html(NtopUtils.addCommas(rsp.zmqRecvStats.flows)+flows_label);
+           $('#if_zmq_dropped_flows').html(NtopUtils.addCommas(rsp.zmqRecvStats.dropped_flows)+" "+NtopUtils.get_trend(rsp.zmqRecvStats.dropped_flows, last_zmq_dropped_flows));
+           $('#if_zmq_events').html(NtopUtils.addCommas(rsp.zmqRecvStats.events)+" "+NtopUtils.get_trend(rsp.zmqRecvStats.events, last_zmq_events));
+           $('#if_zmq_counters').html(NtopUtils.addCommas(rsp.zmqRecvStats.counters)+" "+NtopUtils.get_trend(rsp.zmqRecvStats.counters, last_zmq_counters));
+           $('#if_zmq_msg_drops').html(NtopUtils.addCommas(rsp.zmqRecvStats.zmq_msg_drops)+" "+NtopUtils.get_trend(rsp.zmqRecvStats.zmq_msg_drops, last_zmq_msg_drops));
+           $('#if_zmq_drops_export_queue_full').html(NtopUtils.addCommas(rsp["zmq.drops.export_queue_full"])+" "+NtopUtils.get_trend(rsp["zmq.drops.export_queue_full"], last_zmq_drops_export_queue_full));
+           $('#if_zmq_drops_flow_collection_drops').html(NtopUtils.addCommas(rsp["zmq.drops.flow_collection_drops"])+" "+NtopUtils.get_trend(rsp["zmq.drops.flow_collection_drops"], last_zmq_drops_flow_collection_drops));
+           $('#if_zmq_drops_flow_collection_udp_socket_drops').html(NtopUtils.addCommas(rsp["zmq.drops.flow_collection_udp_socket_drops"])+" "+NtopUtils.get_trend(rsp["zmq.drops.flow_collection_udp_socket_drops"], last_zmq_drops_flow_collection_udp_socket_drops));
+           $('#if_zmq_msg_rcvd').html(NtopUtils.addCommas(rsp.zmqRecvStats.zmq_msg_rcvd)+" "+NtopUtils.get_trend(rsp.zmqRecvStats.zmq_msg_rcvd, last_zmq_msg_rcvd));
+           $('#if_zmq_avg_msg_flows').html(NtopUtils.addCommas(NtopUtils.formatValue(rsp.zmqRecvStats.zmq_avg_msg_flows)));
+           $('#if_num_remote_zmq_flow_exports').html(NtopUtils.addCommas(rsp["zmq.num_flow_exports"])+" "+NtopUtils.get_trend(rsp["zmq.num_flow_exports"], last_probe_zmq_exported_flows));
+
+           last_remote_pps = rsp.remote_pps;
+           last_remote_bps = rsp.remote_bps;
            last_zmq_flows = rsp.zmqRecvStats.flows;
+           last_zmq_dropped_flows = rsp.zmqRecvStats.dropped_flows;
            last_zmq_events = rsp.zmqRecvStats.events;
            last_zmq_counters = rsp.zmqRecvStats.counters;
            last_zmq_msg_drops = rsp.zmqRecvStats.zmq_msg_drops;
+           last_zmq_drops_export_queue_full = rsp["zmq.drops.export_queue_full"];
+           last_zmq_drops_flow_collection_drops = rsp["zmq.drops.flow_collection_drops"];
+           last_zmq_drops_flow_collection_udp_socket_drops = rsp["zmq.drops.flow_collection_udp_socket_drops"];
            last_zmq_msg_rcvd = rsp.zmqRecvStats.zmq_msg_rcvd;
            last_zmq_avg_msg_flows = rsp.zmqRecvStats.zmq_avg_msg_flows;
            last_probe_zmq_exported_flows = rsp["zmq.num_flow_exports"];
            last_zmq_time = now;
         }
 
-	$('#if_pkts').html(addCommas(rsp.packets)+"]]
+	$('#if_pkts').html(NtopUtils.addCommas(rsp.packets)+"]]
 
 print(" Pkts\");")
 
@@ -2104,21 +2248,21 @@ if have_nedge and ifstats.type == "netfilter" and ifstats.netfilter then
         } else {
           $('#nfq_queue_total').removeClass("badge badge-danger");
         }
-	$('#nfq_queue_total').html(fint(rsp.netfilter.nfq.queue_total) + " [" + fint(rsp.netfilter.nfq.queue_pct) + " %]");
-        $('#nfq_queue_total_trend').html(get_trend(last_nfq_queue_total, rsp.netfilter.nfq.queue_total));
-	$('#nfq_handling_failed').html(fint(rsp.netfilter.failures.handle_packet));
-        $('#nfq_handling_failed_trend').html(get_trend(last_nfq_handling_failed, rsp.netfilter.failures.handle_packet));
-	$('#nfq_enobufs').html(fint(rsp.netfilter.failures.no_buffers));
-        $('#nfq_enobufs_trend').html(get_trend(last_nfq_enobufs, rsp.netfilter.failures.no_buffers));
-	$('#num_conntrack_entries').html(fint(rsp.netfilter.nfq.num_conntrack_entries)+ " [" + fint((rsp.netfilter.nfq.num_conntrack_entries*100)/rsp.num_flows) + " %]");
+	$('#nfq_queue_total').html(NtopUtils.fint(rsp.netfilter.nfq.queue_total) + " [" + NtopUtils.fint(rsp.netfilter.nfq.queue_pct) + " %]");
+        $('#nfq_queue_total_trend').html(NtopUtils.get_trend(rsp.netfilter.nfq.queue_total, last_nfq_queue_total));
+	$('#nfq_handling_failed').html(NtopUtils.fint(rsp.netfilter.failures.handle_packet));
+        $('#nfq_handling_failed_trend').html(NtopUtils.get_trend(rsp.netfilter.failures.handle_packet, last_nfq_handling_failed));
+	$('#nfq_enobufs').html(NtopUtils.fint(rsp.netfilter.failures.no_buffers));
+        $('#nfq_enobufs_trend').html(NtopUtils.get_trend(rsp.netfilter.failures.no_buffers, last_nfq_enobufs));
+	$('#num_conntrack_entries').html(NtopUtils.fint(rsp.netfilter.nfq.num_conntrack_entries)+ " [" + NtopUtils.fint((rsp.netfilter.nfq.num_conntrack_entries*100)/rsp.num_flows) + " %]");
 ]]
 end
 
 if ifstats.stats.discarded_probing_packets then
       print[[
-	$('#if_discarded_probing_bytes').html(bytesToVolume(rsp.discarded_probing_bytes));
-	$('#if_discarded_probing_pkts').html(formatPackets(rsp.discarded_probing_packets));
-        $('#if_discarded_probing_trend').html(get_trend(last_discarded_probing_pkts, rsp.discarded_probing_packets));
+	$('#if_discarded_probing_bytes').html(NtopUtils.bytesToVolume(rsp.discarded_probing_bytes));
+	$('#if_discarded_probing_pkts').html(NtopUtils.formatPackets(rsp.discarded_probing_packets));
+        $('#if_discarded_probing_trend').html(NtopUtils.get_trend(rsp.discarded_probing_packets, last_discarded_probing_pkts));
         last_discarded_probing_pkts = rsp.discarded_probing_packets;
 ]]
 end
@@ -2130,21 +2274,21 @@ print [[
 	var last_pkt_ooo =  ]] print(tostring(ifstats.tcpPacketStats.out_of_order)) print [[;
 	var last_pkt_lost = ]] print(tostring(ifstats.tcpPacketStats.lost)) print [[;
 
-	$('#pkt_retransmissions').html(fint(rsp.tcpPacketStats.retransmissions)+" Pkts");  $('#pkt_retransmissions_trend').html(get_trend(last_pkt_retransmissions, rsp.tcpPacketStats.retransmissions));
-	$('#pkt_ooo').html(fint(rsp.tcpPacketStats.out_of_order)+" Pkts");  $('#pkt_ooo_trend').html(get_trend(last_pkt_ooo, rsp.tcpPacketStats.out_of_order));
-	$('#pkt_lost').html(fint(rsp.tcpPacketStats.lost)+" Pkts"); $('#pkt_lost_trend').html(get_trend(last_pkt_lost, rsp.tcpPacketStats.lost));
+	$('#pkt_retransmissions').html(NtopUtils.fint(rsp.tcpPacketStats.retransmissions)+" Pkts");  $('#pkt_retransmissions_trend').html(NtopUtils.get_trend(rsp.tcpPacketStats.retransmissions, last_pkt_retransmissions));
+	$('#pkt_ooo').html(NtopUtils.fint(rsp.tcpPacketStats.out_of_order)+" Pkts");  $('#pkt_ooo_trend').html(NtopUtils.get_trend(rsp.tcpPacketStats.out_of_order, last_pkt_ooo));
+	$('#pkt_lost').html(NtopUtils.fint(rsp.tcpPacketStats.lost)+" Pkts"); $('#pkt_lost_trend').html(NtopUtils.get_trend(rsp.tcpPacketStats.lost, last_pkt_lost));
 	last_pkt_retransmissions = rsp.tcpPacketStats.retransmissions;
 	last_pkt_ooo = rsp.tcpPacketStats.out_of_order;
 	last_pkt_lost = rsp.tcpPacketStats.lost;
 
-	$('#pkts_trend').html(get_trend(last_pkts, rsp.packets));
-	$('#drops_trend').html(get_trend(last_drops, rsp.drops));
+	$('#pkts_trend').html(NtopUtils.get_trend(rsp.packets, last_pkts));
+	$('#drops_trend').html(NtopUtils.get_trend(rsp.drops, last_drops));
 	last_pkts = rsp.packets;
 	last_drops = rsp.drops;
 
-	$('#engaged_alerts_trend').html(get_trend(last_engaged_alerts, rsp.engaged_alerts));
+	$('#engaged_alerts_trend').html(NtopUtils.get_trend(rsp.engaged_alerts, last_engaged_alerts));
 	last_engaged_alerts = rsp.engaged_alerts;
-	$('#dropped_alerts_trend').html(get_trend(last_dropped_alerts, rsp.dropped_alerts));
+	$('#dropped_alerts_trend').html(NtopUtils.get_trend(rsp.dropped_alerts, last_dropped_alerts));
 	last_dropped_alerts = rsp.dropped_alerts;
         $('#dropped_alerts').html(last_dropped_alerts);
 
@@ -2155,22 +2299,22 @@ print [[
 	if(rsp.drops > 0) {
           drops = '<span class="badge badge-danger">';
         }
-	drops = drops + addCommas(rsp.drops)+" Pkts";
+	drops = drops + NtopUtils.addCommas(rsp.drops)+" Pkts";
 
 	if(pctg > 0)      { drops  += " [ "+pctg+" % ]"; }
 	if(rsp.drops > 0) { drops  += '</span>'; }
 	$('#if_drops').html(drops);
 
-        $('#exported_flows').html(fint(rsp.flow_export_count));
-        $('#exported_flows_rate').html(Math.round(rsp.flow_export_rate * 100) / 100);
+        $('#exported_flows').html(NtopUtils.fint(rsp.flow_export_count));
+        $('#exported_flows_rate').html(NtopUtils.fflows(rsp.flow_export_rate));
         if(rsp.flow_export_drops > 0) {
           $('#exported_flows_drops')
             .addClass("badge badge-danger")
-            .html(fint(rsp.flow_export_drops));
+            .html(NtopUtils.fint(rsp.flow_export_drops));
           if(rsp.flow_export_count > 0) {
             $('#exported_flows_drops_pct')
               .addClass("badge badge-danger")
-              .html("[" + Math.round(rsp.flow_export_drops / (rsp.flow_export_count + rsp.flow_export_count) * 100 * 1000) / 1000 + "%]");
+              .html("[" + NtopUtils.fpercent(rsp.flow_export_drops / (rsp.flow_export_count + rsp.flow_export_drops + 1) * 100) + "]");
           } else {
             $('#exported_flows_drops_pct').addClass("badge badge-danger").html("[100%]");
           }
@@ -2179,6 +2323,12 @@ print [[
           $('#exported_flows_drops_pct').removeClass().html("[0%]");
         }
 ]]
+
+if interface.isSyslogInterface() then
+  print [[
+        $('#syslog_tot_events').html(rsp.syslog.tot_events);
+]]
+end
 
 print [[
 	   }

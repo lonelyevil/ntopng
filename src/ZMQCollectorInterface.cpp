@@ -28,9 +28,7 @@
 ZMQCollectorInterface::ZMQCollectorInterface(const char *_endpoint) : ZMQParserInterface(_endpoint) {
   char *tmp, *e, *t;
   const char *topics[] = { "flow", "event", "counter", "template", "option", NULL };
-
-  memset(&recvStats, 0, sizeof(recvStats));
-  memset(&recvStatsCheckpoint, 0, sizeof(recvStatsCheckpoint));
+  
   num_subscribers = 0;
   server_secret_key[0] = '\0';
   server_public_key[0] = '\0';
@@ -123,7 +121,8 @@ ZMQCollectorInterface::ZMQCollectorInterface(const char *_endpoint) : ZMQParserI
       if(zmq_bind(subscriber[num_subscribers].socket, e) != 0) {
 	zmq_close(subscriber[num_subscribers].socket);
 	zmq_ctx_destroy(context);
-	ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to bind to ZMQ endpoint %s [collector]", e);
+	ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to bind to ZMQ endpoint %s [collector]: %s (%d)",
+          e, strerror(errno), errno);
 	free(tmp);
 	throw("Unable to bind to the specified ZMQ endpoint");
       }
@@ -131,7 +130,8 @@ ZMQCollectorInterface::ZMQCollectorInterface(const char *_endpoint) : ZMQParserI
       if(zmq_connect(subscriber[num_subscribers].socket, e) != 0) {
 	zmq_close(subscriber[num_subscribers].socket);
 	zmq_ctx_destroy(context);
-	ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to connect to ZMQ endpoint %s [probe]", e);
+	ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to connect to ZMQ endpoint %s [probe]: %s (%d)",
+          e, strerror(errno), errno);
 	free(tmp);
 	throw("Unable to connect to the specified ZMQ endpoint");
       }
@@ -227,6 +227,7 @@ char *ZMQCollectorInterface::generateEncryptionKeys() {
 void ZMQCollectorInterface::checkPointCounters(bool drops_only) {
   if(!drops_only) {
     recvStatsCheckpoint.num_flows = recvStats.num_flows,
+      recvStatsCheckpoint.num_dropped_flows = recvStats.num_dropped_flows,
       recvStatsCheckpoint.num_events = recvStats.num_events,
       recvStatsCheckpoint.num_counters = recvStats.num_counters,
       recvStatsCheckpoint.num_templates = recvStats.num_templates,
@@ -504,6 +505,7 @@ void ZMQCollectorInterface::lua(lua_State* vm) {
 
   lua_newtable(vm);
   lua_push_uint64_table_entry(vm, "flows", recvStats.num_flows);
+  lua_push_uint64_table_entry(vm, "dropped_flows", recvStats.num_dropped_flows);
   lua_push_uint64_table_entry(vm, "events", recvStats.num_events);
   lua_push_uint64_table_entry(vm, "counters", recvStats.num_counters);
   lua_push_uint64_table_entry(vm, "zmq_msg_rcvd", recvStats.zmq_msg_rcvd);
@@ -514,6 +516,7 @@ void ZMQCollectorInterface::lua(lua_State* vm) {
 
   lua_newtable(vm);
   lua_push_uint64_table_entry(vm, "flows", recvStats.num_flows - recvStatsCheckpoint.num_flows);
+  lua_push_uint64_table_entry(vm, "dropped_flows", recvStats.num_dropped_flows - recvStatsCheckpoint.num_dropped_flows);
   lua_push_uint64_table_entry(vm, "events", recvStats.num_events - recvStatsCheckpoint.num_events);
   lua_push_uint64_table_entry(vm, "counters", recvStats.num_counters - recvStatsCheckpoint.num_counters);
   lua_push_uint64_table_entry(vm, "zmq_msg_rcvd", recvStats.zmq_msg_rcvd - recvStatsCheckpoint.zmq_msg_rcvd);
@@ -536,11 +539,8 @@ void ZMQCollectorInterface::lua(lua_State* vm) {
 void ZMQCollectorInterface::purgeIdle(time_t when, bool force_idle) {
   NetworkInterface::purgeIdle(when);
 
-  if(flowHashing) {
-    FlowHashing *current, *tmp;
-    HASH_ITER(hh, flowHashing, current, tmp)
-      static_cast<NetworkInterface*>(current->iface)->purgeIdle(when, force_idle);
-  }
+  for(std::map<u_int64_t, NetworkInterface*>::iterator it = flowHashing.begin(); it != flowHashing.end(); ++it)
+    it->second->purgeIdle(when, force_idle);
 }
 
 #endif

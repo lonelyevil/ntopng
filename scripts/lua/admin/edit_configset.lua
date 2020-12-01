@@ -16,7 +16,13 @@ local template = require "template_utils"
 local user_scripts = require "user_scripts"
 local json = require "dkjson"
 local discover = require "discover_utils"
-local mud_utils = require "mud_utils"
+local rest_utils = require "rest_utils"
+local auth = require "auth"
+
+if not auth.has_capability(auth.capabilities.user_scripts) then
+   rest_utils.answer(rest_utils.consts.err.not_granted)
+   return
+end
 
 sendHTTPContentTypeHeader('text/html')
 
@@ -25,6 +31,7 @@ sendHTTPContentTypeHeader('text/html')
 local script_subdir = _GET["subdir"]
 local confset_id = _GET["confset_id"]
 local script_filter = _GET["user_script"]
+local search_filter = _GET["search_script"]
 local configset = user_scripts.getConfigsets()[tonumber(confset_id)]
 local script_type = user_scripts.getScriptType(script_subdir)
 interface.select(getSystemInterfaceId())
@@ -95,14 +102,6 @@ end
 
 local device_types_list = {{elements = device_types}}
 
--- MUD max recording
-
-local mud_max_recording = {
-   {3600, mud_utils.formatMaxRecording(3600)},
-   {86400, mud_utils.formatMaxRecording(86400)},
-   {604800, mud_utils.formatMaxRecording(604800)},
-}
-
 local context = {
    script_list = {
       subdir = script_subdir,
@@ -112,13 +111,14 @@ local context = {
       script_subdir = script_subdir,
       confset_name = confset_name,
       script_filter = script_filter,
+      search_filter = search_filter,
       page_url = ntop.getHttpPrefix() .. string.format("/lua/admin/edit_configset.lua?confset_id=%u&subdir=%s", confset_id, script_subdir),
       apps_and_categories = json.encode(apps_and_categories),
       device_types = json.encode(device_types_list),
-      mud_max_recording = json.encode(mud_max_recording),
    },
    script_categories = script_categories,
    info = ntop.getInfo(),
+   json = json
 }
 
 -- print config_list.html template

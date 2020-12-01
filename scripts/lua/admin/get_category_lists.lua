@@ -45,6 +45,7 @@ local currentPage  = _GET["currentPage"]
 local perPage      = _GET["perPage"]
 local sortColumn   = _GET["sortColumn"]
 local sortOrder    = _GET["sortOrder"]
+local enabledStatus  = _GET["enabled_status"]
 
 local sortPrefs = "category_lists"
 
@@ -93,6 +94,12 @@ for list_name, list in pairs(lists) do
   local catname = interface.getnDPICategoryName(list.category)
 
   if((not isEmptyString(category_filter)) and (category_filter ~= catname)) then
+    goto continue
+  end
+
+  if enabledStatus == "disabled" and list.enabled then
+    goto continue
+  elseif enabledStatus == "enabled" and not list.enabled then
     goto continue
   end
 
@@ -149,7 +156,7 @@ for key in pairsByValues(sort_to_key, sOrder) do
       column_update_interval_label = update_interval_label,
       column_category = "cat_" .. list.category,
       column_category_name = getCategoryLabel(list.category_name),
-      column_num_hosts = list.status.num_hosts,
+      column_num_hosts = ternary(list.status.num_hosts > 0, format_utils.formatValue(list.status.num_hosts), ''),
       column_last_update = format_utils.formatPastEpochShort(list.status.last_update),
     }
   end

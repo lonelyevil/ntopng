@@ -3,10 +3,7 @@
  *
  * This script implements the logic for the overview tab inside snmpdevice_stats.lua page.
  */
-
 $(document).ready(function () {
-
-    let snmpDeviceRowData = {};
 
     // constant for filtering table
     const RESPONSIVE_COLUMN_INDEX = 0;
@@ -14,20 +11,36 @@ $(document).ready(function () {
 
     // define a constant for the SNMP version dropdown value
     const SNMP_VERSION_THREE = 2;
+    const MAX_RECIPIENTS = 3;
+
+    // an object containing ddefault values for the Edit SNMP modal
+    const SNMP_DEFAULTS = {
+        VERSION : 0,
+        DEFAULT_POOL: 0
+    };
 
     // required fields for SNMPv3
     const requiredFields = {};
 
     const addResponsivenessFilter = (tableAPI) => {
-        DataTableUtils.addFilterDropdown(
-            i18n.snmp.device_responsiveness, responsivenessFilters, RESPONSIVE_COLUMN_INDEX, '#table-devices_filter', tableAPI
-        );
+        return new DataTableFiltersMenu({
+            filterTitle: i18n.snmp.device_responsiveness,
+            filters: responsivenessFilters,
+            columnIndex: RESPONSIVE_COLUMN_INDEX,
+            tableAPI: tableAPI,
+            filterMenuKey: 'responsiveness-filters'
+        });
     }
 
     const addPoolFilters = (tableAPI) => {
-        DataTableUtils.addFilterDropdown(
-            i18n.pools, poolFilters, POOL_COLUMN_INDEX, '#table-devices_filter', tableAPI
-        );
+
+        return new DataTableFiltersMenu({
+            filterTitle: i18n.pools,
+            filters: poolFilters,
+            columnIndex: POOL_COLUMN_INDEX,
+            tableAPI: tableAPI,
+            filterMenuKey: 'pool-filters'
+        });
     }
 
     const toggleSnmpTableButtons = (response) => {
@@ -65,7 +78,6 @@ $(document).ready(function () {
         }
 
         // clean the form if the response was successful
-        modalHandler.cleanForm();
         $snmpTable.ajax.reload(toggleSnmpTableButtons, false);
 
         $(`${modalSelector} button[type='submit'] span.spinner-border`).hide();
@@ -93,10 +105,10 @@ $(document).ready(function () {
 
             const value = $(this).val();
 
-            if (new RegExp(REGEXES.domainName).test(value)) {
+            if (new RegExp(NtopUtils.REGEXES.domainName).test(value)) {
                 $(`${modalSelector} select[name='cidr']`).attr("disabled", "disabled");
             }
-            else if (new RegExp(REGEXES.ipv6).test(value)) {
+            else if (new RegExp(NtopUtils.REGEXES.ipv6).test(value)) {
                 $(`${modalSelector} select[name='cidr'] option[value!='128']`).attr("disabled", "disabled");
                 $(`${modalSelector} select[name='cidr']`).val(128);
             }
@@ -141,8 +153,6 @@ $(document).ready(function () {
                 requiredFields[modalSelector]['community'] = $(`.community-field [name][required]`);
             if (!requiredFields[modalSelector]['non-community'])
                 requiredFields[modalSelector]['non-community'] = $(`.non-community-field [name][required]`);
-
-            console.log(requiredFields);
 
             // if the selected SNMPversion is the third one
             // then show the necessary fields (.non-community-field)
@@ -285,16 +295,10 @@ $(document).ready(function () {
 
                     if (!isAdministrator) return "";
 
-                    return (`
-                        <div class="btn-group btn-group-sm" role="group">
-                            <a data-toggle="modal" class="btn btn-info" href="#edit-snmp-device-modal">
-                                <i class="fas fa-edit"></i>
-                            </a>
-                            <a data-toggle="modal" class="btn btn-danger" href="#delete-snmp-device-modal">
-                                <i class="fas fa-trash"></i>
-                            </a>
-                        </div>
-                    `);
+                    return DataTableUtils.createActionButtons([
+                        { class: 'btn-info', icon: 'fa-edit', modal: '#edit-snmp-device-modal' },
+                        { class: 'btn-danger', icon: 'fa-trash', modal: '#delete-snmp-device-modal'}
+                    ]);
                 }
             }
         ],
@@ -305,9 +309,14 @@ $(document).ready(function () {
             const tableAPI = settings.oInstance.api();
             // remove these styles from the table headers
             $(`th`).removeClass(`text-center`).removeClass(`text-right`);
-            // append the responsive filter for the table
-            addResponsivenessFilter(tableAPI);
-            addPoolFilters(tableAPI);
+
+            // when the data has been fetched check if the url has a column_key param
+            // if the recipient is builtin then cancel the modal opening
+            DataTableUtils.openEditModalByQuery({
+                paramName: 'column_key',
+                datatableInstance: tableAPI,
+                modalHandler: $editModalHandler,
+            });
 
             setInterval(() => { tableAPI.ajax.reload(toggleSnmpTableButtons, false); }, 30000);
 
@@ -316,20 +325,67 @@ $(document).ready(function () {
 
     // initialize the DataTable with the created config
     const $snmpTable = $(`#table-devices`).DataTable(dtConfig);
+    addPoolFilters($snmpTable);
+    addResponsivenessFilter($snmpTable);
+
+    $(`#add-snmp-device-modal form`).modalHandler({
+        method: 'post',
+        csrf: addCsrf,
+        resetAfterSubmit: false,
+        endpoint: `${ http_prefix }/lua/pro/rest/v1/add/snmp/device.lua`,
+        beforeSumbit: () => {
+            return buildDataRequest(`#add-snmp-device-modal`);
+        },
+        onModalShow: () => {
+
+            $(`#add-snmp-feedback`).hide();
+            // set the edit pool link to the default one when the modal opens
+            const $editPoolLink = $('#add-snmp-device-modal .edit-pool');
+            const editPoolHref = NtopUtils.buildURL(
+                '/lua/admin/manage_pools.lua?', {pool_id: SNMP_DEFAULTS.DEFAULT_POOL, page: 'snmp_device'},
+                true
+            );
+            $editPoolLink.attr('href', editPoolHref);
+
+            // load the recipient lists inside the modal
+            $(`#add-snmp-device-modal select[name='pool']`).trigger('change');
+        },
+        onSubmitSuccess: (response, textStatus, modalHandler) => {
+            onRequestSuccess(response, textStatus, modalHandler, '#add-snmp-device-modal');
+        }
+    }).invokeModalInit();
 
     const $editModalHandler = $(`#edit-snmp-device-modal form`).modalHandler({
         method: 'post',
         csrf: addCsrf,
         resetAfterSubmit: false,
         endpoint: `${ http_prefix }/lua/pro/rest/v1/edit/snmp/device/device.lua`,
-        beforeSumbit: () => {
-            return buildDataRequest('#edit-snmp-device-modal');
+        beforeSumbit: (selectedSNMPDevice) => {
+            const data = buildDataRequest('#edit-snmp-device-modal');
+            data.snmp_host = selectedSNMPDevice.column_key;
+            return data;
         },
-        onModalInit: () => {
-            $(`#edit-snmp-device-modal input[name='snmp_host']`).val(snmpDeviceRowData.column_key).attr("readonly", true);
-            $(`#edit-snmp-device-modal input[name='snmp_read_community']`).val(snmpDeviceRowData.column_community);
-            $(`#edit-snmp-device-modal select[name='snmp_version']`).val(snmpDeviceRowData.column_version);
-            $(`#edit-snmp-device-modal select[name='pool']`).val(snmpDeviceRowData.column_pool_id);
+        onModalInit: (selectedSNMPDevice) => {
+
+            // if the version is over SNMP_VERSION_THREE then bind it to the default one
+            const version = (selectedSNMPDevice.column_version > SNMP_VERSION_THREE) ? SNMP_DEFAULTS.VERSION : selectedSNMPDevice.column_version;
+
+            $(`#edit-snmp-device-modal input[name='snmp_read_community']`).val(selectedSNMPDevice.column_community);
+	        $(`#edit-snmp-device-modal input[name='snmp_write_community']`).val(selectedSNMPDevice.column_write_community);
+            $(`#edit-snmp-device-modal select[name='snmp_version']`).val(version);
+            $(`#edit-snmp-device-modal select[name='pool']`).val(selectedSNMPDevice.column_pool_id);
+            $(`#edit-snmp-device-modal .device-name`).text(selectedSNMPDevice.column_key);
+
+            // set the edit pool link
+            const $editPoolLink = $('#edit-snmp-device-modal .edit-pool');
+            const editPoolHref = NtopUtils.buildURL(
+                '/lua/admin/manage_pools.lua?', {pool_id: selectedSNMPDevice.column_pool_id, page: 'snmp_device'},
+                true, {column_key: selectedSNMPDevice.column_key}
+            );
+            $editPoolLink.attr('href', editPoolHref);
+
+            // load the recipient lists inside the modal
+            $(`#edit-snmp-device-modal select[name='pool']`).trigger('change');
         },
         onSubmitSuccess: (response, textStatus, modalHandler) => {
             onRequestSuccess(response, textStatus, modalHandler, '#edit-snmp-device-modal');
@@ -341,11 +397,11 @@ $(document).ready(function () {
         csrf: deleteCsrf,
         endpoint: `${ http_prefix }/lua/pro/rest/v1/delete/snmp/device.lua`,
         resetAfterSubmit: false,
-        onModalInit: function() {
-            $(`.delete-snmp-device-name`).text(snmpDeviceRowData.column_key);
+        onModalInit: function(selectedSNMPDevice) {
+            $(`.delete-snmp-device-name`).text(selectedSNMPDevice.column_key);
         },
-        beforeSumbit: function() {
-            return { host: snmpDeviceRowData.column_key };
+        beforeSumbit: function(selectedSNMPDevice) {
+            return { host: selectedSNMPDevice.column_key };
         },
         onSubmitSuccess: function (response, textStatus, modalHandler) {
 
@@ -360,37 +416,44 @@ $(document).ready(function () {
     });
 
     $(`#table-devices`).on('click', `a[href='#delete-snmp-device-modal']`, function (e) {
-        snmpDeviceRowData = $snmpTable.row($(this).parent().parent()).data();
-        $deleteModalHandler.invokeModalInit();
+        const selectedSNMPDevice = $snmpTable.row($(this).parent().parent()).data();
+        $deleteModalHandler.invokeModalInit(selectedSNMPDevice);
     });
 
     $(`#table-devices`).on('click', `a[href='#edit-snmp-device-modal']`, function (e) {
-        snmpDeviceRowData = $snmpTable.row($(this).parent().parent()).data();
-        $editModalHandler.invokeModalInit();
+        const selectedSNMPDevice = $snmpTable.row($(this).parent().parent()).data();
+        $editModalHandler.invokeModalInit(selectedSNMPDevice);
     });
 
-    $(`#add-snmp-device-modal form`).modalHandler({
-        method: 'post',
-        csrf: addCsrf,
-        resetAfterSubmit: false,
-        endpoint: `${ http_prefix }/lua/pro/rest/v1/add/snmp/device.lua`,
-        beforeSumbit: () => {
-            return buildDataRequest(`#add-snmp-device-modal`);
-        },
-        onModalShow: () => { $(`#add-snmp-feedback`).hide(); },
-        onSubmitSuccess: (response, textStatus, modalHandler) => {
-            onRequestSuccess(response, textStatus, modalHandler, '#add-snmp-device-modal');
-        }
-    }).invokeModalInit();
+    // on changing the associated pool updates the link to the edit pool
+    $(`select[name='pool']`).change(async function() {
 
-    // configure import config modal
-    importModalHelper({
-        load_config_xhr: (jsonConf) => {
-          return $.post(`${http_prefix}/lua/pro/enterprise/import_snmp_devices_config.lua`, { csrf: importCsrf, JSON: jsonConf,});
-        },
-        reset_csrf: (newCsrf) => {
-            importCsrf = newCsrf;
+        const poolId = $(this).val();
+        const $editPoolLink = $(this).parents('.form-group').find('.edit-pool');
+        const $recipientsInfo = $(this).parents('.form-group').find('.recipients-info');
+
+        let url = new URL($editPoolLink.attr('href')).searchParams.get('referer');
+        const columnKey = new URL(url).searchParams.get('column_key');
+
+        const editPoolHref = NtopUtils.buildURL(
+            '/lua/admin/manage_pools.lua?', {pool_id: poolId, page: 'snmp_device'},
+            true, {column_key: columnKey}
+        );
+
+        $editPoolLink.attr('href', editPoolHref);
+
+        const [success, pool] = await NtopUtils.getPool('snmp/device', poolId);
+        if (!success) return;
+
+        let recipients = pool.recipients;
+
+        if (recipients.length == 0) {
+            $recipientsInfo.html(i18n.no_recipients);
+            return;
         }
+
+        const recipientNames = NtopUtils.arrayToListString(recipients.map(recipient => recipient.recipient_name), MAX_RECIPIENTS);
+        $recipientsInfo.html(i18n.some_recipients.replace('${recipients}', recipientNames));
+
     });
-
 });

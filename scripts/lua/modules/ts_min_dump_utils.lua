@@ -118,7 +118,6 @@ function ts_dump.iface_update_general_stats(when, ifstats, verbose)
   ts_utils.append("iface:flows", {ifid=ifstats.id, num_flows=ifstats.stats.flows}, when)
   ts_utils.append("iface:http_hosts", {ifid=ifstats.id, num_hosts=ifstats.stats.http_hosts}, when)
   ts_utils.append("iface:alerted_flows", {ifid=ifstats.id, num_flows=ifstats.num_alerted_flows}, when)
-  ts_utils.append("iface:misbehaving_flows", {ifid=ifstats.id, num_flows=ifstats.num_misbehaving_flows}, when)
   ts_utils.append("iface:new_flows", {ifid=ifstats.id, new_flows=ifstats.stats.new_flows}, when)
 end
 
@@ -337,8 +336,6 @@ function ts_dump.run_min_dump(_ifname, ifstats, config, when)
   dumpTopTalkers(_ifname, ifstats, verbose)
 
   user_scripts.schedulePeriodicScripts("min")
-  alert_utils.check_macs_alerts(ifstats.id)
-  alert_utils.check_host_pools_alerts(ifstats.id)
 
   local iface_rrd_creation_enabled = areInterfaceTimeseriesEnabled(ifstats.id)
 

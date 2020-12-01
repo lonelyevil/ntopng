@@ -7,7 +7,7 @@ local alert_keys = require "alert_keys"
 -- #################################################################
 
 -- @brief Prepare an alert table used to generate the alert
--- @param alert_severity A severity as defined in `alert_consts.alert_severities`
+-- @param alert_severity A severity as defined in `alert_severities`
 -- @param list_name The name of the failed list as string
 -- @param last_error The string of the error which caused the failure
 -- @return A table with the alert built
@@ -16,7 +16,8 @@ local function createListDownloadFailedType(alert_severity, list_name, last_erro
       alert_severity = alert_severity,
       alert_type_params = {
 	 name = list_name,
-	 err = last_error
+	 err = last_error,
+	 url = ntop.getHttpPrefix().."/lua/admin/edit_category_lists.lua"
       }
    }
 

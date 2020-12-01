@@ -13,6 +13,7 @@ local format_utils = require "format_utils"
 local json = require "dkjson"
 local alerts_api = require "alerts_api"
 local alert_consts = require "alert_consts"
+local recording_utils = require "recording_utils"
 
 sendHTTPHeader('application/json')
 
@@ -27,19 +28,6 @@ end
 interface.select(_GET["ifid"])
 
 local ifid = interface.getId()
-local entities_bitmaps = {}
-
-local function getEntityAlertDisabledBitmap(entity, entity_val)
-  if((entities_bitmaps[entity] ~= nil) and (entities_bitmaps[entity][entity_val] ~= nil)) then
-    return entities_bitmaps[entity][entity_val]
-  end
-
-  local bitmap = alerts_api.getEntityAlertsDisabledBitmap(ifid, entity, entity_val)
-  entities_bitmaps[entity] = entities_bitmaps[entity] or {}
-  entities_bitmaps[entity][entity_val] = bitmap
-
-  return(bitmap)
-end
 
 local function getExplorerLink(origin, target, timestamp)
    local url = ntop.getHttpPrefix() .. "/lua/pro/enterprise/flow_alerts_explorer.lua?"
@@ -94,24 +82,24 @@ if alerts == nil then alerts = {} end
 
 local res_formatted = {}
 
-for _key,_value in ipairs(alerts) do
+for k,v in ipairs(alerts) do
    local record = {}
    local alert_entity
    local alert_entity_val
    local column_duration = ""
-   local tdiff = os.time()-_value["alert_tstamp"]
-   local column_date = os.date("%c", _value["alert_tstamp"])
+   local tdiff = os.time() - v["alert_tstamp"]
+   local column_date = os.date("%c", v["alert_tstamp"])
 
-   local alert_id        = _value["rowid"]
+   local alert_id = v["rowid"]
 
-   if _value["alert_entity"] ~= nil then
-      alert_entity    = tonumber(_value["alert_entity"])
+   if v["alert_entity"] ~= nil then
+      alert_entity    = tonumber(v["alert_entity"])
    else
       alert_entity = "flow" -- flow alerts page doesn't have an entity
    end
 
-   if _value["alert_entity_val"] ~= nil then
-      alert_entity_val = _value["alert_entity_val"]
+   if v["alert_entity_val"] ~= nil then
+      alert_entity_val = v["alert_entity_val"]
    else
       alert_entity_val = ""
    end
@@ -119,67 +107,88 @@ for _key,_value in ipairs(alerts) do
    if(tdiff <= 600) then
       column_date  = secondsToTime(tdiff).. " " ..i18n("details.ago")
    else
-      column_date = format_utils.formatPastEpochShort(_value["alert_tstamp"])
+      column_date = format_utils.formatPastEpochShort(v["alert_tstamp"])
    end
 
    if engaged == true then
-      column_duration = secondsToTime(os.time() - tonumber(_value["alert_tstamp"]))
-   elseif tonumber(_value["alert_tstamp_end"]) ~= nil 
-        and (tonumber(_value["alert_tstamp_end"]) - tonumber(_value["alert_tstamp"])) ~= 0 then
-      column_duration = secondsToTime(tonumber(_value["alert_tstamp_end"]) - tonumber(_value["alert_tstamp"]))
+      column_duration = secondsToTime(os.time() - tonumber(v["alert_tstamp"]))
+   elseif tonumber(v["alert_tstamp_end"]) ~= nil
+        and (tonumber(v["alert_tstamp_end"]) - tonumber(v["alert_tstamp"])) ~= 0 then
+      column_duration = secondsToTime(tonumber(v["alert_tstamp_end"]) - tonumber(v["alert_tstamp"]))
    end
 
-   local column_severity = alert_consts.alertSeverityLabel(tonumber(_value["alert_severity"]))
-   local column_type     = alert_consts.alertTypeLabel(tonumber(_value["alert_type"]))
-   local column_count    = format_utils.formatValue(tonumber(_value["alert_counter"]))
-   local column_score    = format_utils.formatValue(tonumber(_value["score"]))
-   local alert_info      = alert_utils.getAlertInfo(_value)
-   local column_msg      = string.gsub(alert_utils.formatAlertMessage(ifid, _value, alert_info), '"', "'")
-   local column_chart = nil
+   local column_severity = alert_consts.alertSeverityLabel(tonumber(v["alert_severity"]))
+   local column_type     = alert_consts.alertTypeLabel(tonumber(v["alert_type"]))
+   local column_count    = format_utils.formatValue(tonumber(v["alert_counter"]))
+   local column_score    = format_utils.formatValue(tonumber(v["score"]))
+   local alert_info      = alert_utils.getAlertInfo(v)
+   local column_msg      = string.gsub(alert_utils.formatAlertMessage(ifid, v, alert_info), '"', "'")
+   local column_chart = ""
 
    if ntop.isPro() then
       local graph_utils = require "graph_utils"
 
       if graph_utils.getAlertGraphLink then
-	 column_chart    = graph_utils.getAlertGraphLink(getInterfaceId(ifname), _value, alert_info, engaged)
-	 if not isEmptyString(column_chart) then
-	    column_chart = "<a href='".. column_chart .."'><i class='fas fa-search-plus drilldown-icon'></i></a>"
+	 local chart_link = graph_utils.getAlertGraphLink(getInterfaceId(ifname), v, alert_info, engaged)
+	 if not isEmptyString(chart_link) then
+	    column_chart = column_chart.."<a class='btn btn-sm btn-info' href='".. chart_link .."'><i class='fas fa-search-plus drilldown-icon'></i></a>"
 	 end
+      end
+   end
+
+   if alert_entity == "flow" then
+      -- Checking PCAP data availability
+      local traffic_extraction_available = recording_utils.isActive(ifid) and recording_utils.isExtractionActive(ifid)
+      if traffic_extraction_available then 
+         -- Checking PCAP availability in the time window
+         local epoch_begin = tonumber(v["first_seen"])
+         local epoch_end = tonumber(v["alert_tstamp"])
+         local window_info = recording_utils.isDataAvailable(ifid, epoch_begin, epoch_end)
+         if window_info.epoch_begin and window_info.epoch_end then
+            -- Building BPF filter
+            local filter = "host "..v["cli_addr"].." and host "..v["srv_addr"]..
+                           " and port "..v["cli_port"].." and port "..v["srv_port"]
+            filer = filter.." and ip proto "..v["proto"]
+            if not isEmptyString(v["vlan_id"]) then
+               filer = filter.." and vlan "..v["vlan_id"]
+            end
+            
+            column_chart = column_chart.." <button class='btn btn-link btn-sm' title='"..i18n("traffic_recording.pcap_download").."' "
+              .."onclick='pcapDownload(this); return false;'"
+              .." data-filter='"..filter.."' data-epoch-begin='"..window_info.epoch_begin.."' data-epoch-end='"..window_info.epoch_end.."'><i class='fas fa-lg fa-download'></i></button>"
+         end
       end
    end
 
    local column_id = tostring(alert_id)
    if(ntop.isEnterpriseM()) then
       if (status == "historical-flows") then
-	 record["column_explorer"] = getExplorerLink(_value["cli_addr"], _value["srv_addr"], _value["alert_tstamp"])
+	 record["column_explorer"] = getExplorerLink(v["cli_addr"], v["srv_addr"], v["alert_tstamp"])
       end
    end
 
    if status ~= "historical-flows" then
-     local bitmap = getEntityAlertDisabledBitmap(_value["alert_entity"], _value["alert_entity_val"])
-
-     record["column_entity_formatted"] = alert_consts.formatAlertEntity(ifid, alert_consts.alertEntityRaw(_value["alert_entity"]), _value["alert_entity_val"])
-     record["column_alert_disabled"] = ntop.bitmapIsSet(bitmap, tonumber(_value["alert_type"]))
+     record["column_entity_formatted"] = alert_consts.formatAlertEntity(ifid, alert_consts.alertEntityRaw(v["alert_entity"]), v["alert_entity_val"])
    end
 
    record["column_key"] = column_id
    record["column_date"] = column_date
    record["column_duration"] = column_duration
    record["column_severity"] = column_severity
-   record["column_severity_id"] = tonumber(_value["alert_severity"])
-   record["column_subtype"] = _value["alert_subtype"]
-   record["column_granularity"] = _value["alert_granularity"]
+   record["column_severity_id"] = tonumber(v["alert_severity"])
+   record["column_subtype"] = v["alert_subtype"]
+   record["column_granularity"] = v["alert_granularity"]
    record["column_count"] = column_count
    record["column_score"] = column_score
    record["column_type"] = column_type
-   record["column_type_id"] = tonumber(_value["alert_type"])
+   record["column_type_id"] = tonumber(v["alert_type"])
    record["column_msg"] = column_msg
    record["column_entity_id"] = alert_entity
    record["column_entity_val"] = alert_entity_val
    record["column_chart"] = column_chart
 
    res_formatted[#res_formatted + 1] = record
-	  
+
 end -- for
 
 local result = {}

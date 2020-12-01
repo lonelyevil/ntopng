@@ -53,13 +53,14 @@ Paginator::Paginator() {
   unicast_traffic = -1;
   unidirectional_traffic = -1;
   alerted_flows = -1;
-  misbehaving_flows = -1;
   filtered_flows = -1;
   pool_filter = ((u_int16_t)-1);
   mac_filter = NULL;
   flow_status_filter = ((u_int16_t)-1);
+  flow_status_severity_filter = alert_level_group_none;
 
-  deviceIP = inIndex = outIndex = 0;
+  deviceIP = 0;
+  inIndex = outIndex = (u_int16_t)-1;
   asn_filter = (u_int32_t)-1;
 
   icmp_type = u_int8_t(-1);
@@ -204,6 +205,8 @@ void Paginator::readOptions(lua_State *L, int index) {
 	  icmp_code = lua_tointeger(L, -1);
 	else if(!strcmp(key, "statusFilter"))
 	  flow_status_filter = lua_tointeger(L, -1);
+	else if(!strcmp(key, "statusSeverityFilter"))
+	  flow_status_severity_filter = (AlertLevelGroup)lua_tointeger(L, -1);
 	//else
 	  //ntop->getTrace()->traceEvent(TRACE_ERROR, "Invalid int type (%d) for option %s", lua_tointeger(L, -1), key);
 	break;
@@ -217,8 +220,6 @@ void Paginator::readOptions(lua_State *L, int index) {
 	  unicast_traffic = lua_toboolean(L, -1) ? 1 : 0;
 	else if (!strcmp(key, "unidirectional"))
 	  unidirectional_traffic = lua_toboolean(L, -1) ? 1 : 0;
-	else if (!strcmp(key, "misbehavingFlows"))
-	  misbehaving_flows = lua_toboolean(L, -1) ? 1 : 0;
 	else if (!strcmp(key, "alertedFlows"))
 	  alerted_flows = lua_toboolean(L, -1) ? 1 : 0;
 	else if (!strcmp(key, "filteredFlows"))

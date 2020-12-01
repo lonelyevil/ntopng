@@ -3,17 +3,19 @@
 --
 dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/import_export/?.lua;" .. package.path
 
 require "lua_utils"
 
 local info = ntop.getInfo() 
 
+local scripts_import_export = require "scripts_import_export"
 local json = require ("dkjson")
 local page_utils = require("page_utils")
 local format_utils = require("format_utils")
 local os_utils = require "os_utils"
-local user_scripts = require "user_scripts"
 local rest_utils = require("rest_utils")
+local tracker = require("tracker")
 
 --
 -- Import scripts configuration
@@ -21,50 +23,31 @@ local rest_utils = require("rest_utils")
 -- NOTE: in case of invalid login, no error is returned but redirected to login
 --
 
-sendHTTPHeader('application/json')
-
 if not haveAdminPrivileges() then
-   print(rest_utils.rc(rest_utils.consts_not_granted))
+   rest_utils.answer(rest_utils.consts.err.not_granted)
    return
 end
 
 -- ################################################
 
 if(_POST["JSON"] == nil) then
-  print(rest_utils.rc(rest_utils.consts_invalid_args))
+  rest_utils.answer(rest_utils.consts.err.invalid_args)
   return
 end
 
 local data = json.decode(_POST["JSON"])
 
-if(table.empty(data)) then
-  print(rest_utils.rc(rest_utils.consts_bad_format))
-  return
-end
+local scripts_import_export = scripts_import_export:create()
+local res = scripts_import_export:import(data)
 
-if data["0"] == nil then
-  print(rest_utils.rc(rest_utils.consts_bad_content))
-  return
-end
-
--- ################################################
-
-local failure = false
-
-for config_id, configset in pairs(data) do
-  if configset.name ~= nil then
-    local success, err = user_scripts.createOrReplaceConfigset(configset)
-    if not success then
-      failure = true
-    end
-  end
-end
-
-if failure then
-  print(rest_utils.rc(rest_utils.consts_internal_error))
+if res.err then
+  rest_utils.answer(res.err)
   return
 end
 
 -- ################################################
 
-print(rest_utils.rc(rest_utils.consts_ok))
+-- TRACKER HOOK
+tracker.log('set_scripts_config', {})
+
+rest_utils.answer(rest_utils.consts.success.ok)

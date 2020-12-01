@@ -3,11 +3,12 @@
 --
 
 local alert_keys = require "alert_keys"
+local format_utils = require "format_utils"
 
 -- #######################################################
 
 -- @brief Prepare an alert table used to generate the alert
--- @param alert_severity A severity as defined in `alert_consts.alert_severities`
+-- @param alert_severity A severity as defined in `alert_severities`
 -- @param alert_granularity A granularity as defined in `alert_consts.alerts_granularities`
 -- @param idle Number of entries in state idle
 -- @param idle_perc Fraction of entries in state idle, with reference to the total number of entries (idle + active)
@@ -32,10 +33,11 @@ end
 local function formatSlowPurge(ifid, alert, threshold_info)
   local alert_consts = require("alert_consts")
   local entity = alert_consts.formatAlertEntity(ifid, alert_consts.alertEntityRaw(alert["alert_entity"]), alert["alert_entity_val"])
-  local max_idle_perc = threshold_info.threshold or 0
+  local max_idle_perc = format_utils.round(threshold_info.edge or 0, 0)
+  local actual_idle_perc = format_utils.round(threshold_info.idle_perc or 0, 0)
 
   return(i18n("alert_messages.slow_purge", {
-    iface = entity, max_idle = max_idle_perc,
+    iface = entity, idle = actual_idle_perc, max_idle = max_idle_perc,
     url = ntop.getHttpPrefix() .. "/lua/if_stats.lua?ifid=" .. ifid .. "&page=internals",
   }))
 end

@@ -7,6 +7,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 package.path = dirs.installdir .. "/scripts/lua/modules/pools/?.lua;" .. package.path
 
 require "lua_utils"
+local ui_utils = require "ui_utils"
 local graph_utils = require "graph_utils"
 local template = require "template_utils"
 local host_pools = require "host_pools"
@@ -34,7 +35,7 @@ if isAdministrator() and (_POST["member"] ~= nil) and (_POST["pool"] ~= nil) the
   host_pools_instance:bind_member(_POST["member"], _POST["pool"])
 end
 
-print("<h2>"..i18n("unknown_devices.unassigned_devices").." <small><a title='".. i18n("host_pools.manage_pools") .."' href='".. ntop.getHttpPrefix() .."/lua/admin/manage_pools.lua'><i class='fas fa-cog'></i></a></small></h2>")
+print("<h3>"..i18n("unknown_devices.unassigned_devices").." <small><a title='".. i18n("host_pools.manage_pools") .."' href='".. ntop.getHttpPrefix() .."/lua/admin/manage_pools.lua'><i class='fas fa-cog'></i></a></small></h3>")
 
 print(
   template.gen("modal_confirm_dialog.html", {
@@ -54,19 +55,18 @@ print(
 
 local pools = host_pools_instance:get_num_pools()
 local no_pools = (pools < 2)
+local notes = {
+   {content = i18n("unknown_devices.no_pools"), hidden = not no_pools},
+   {content = i18n("unknown_devices.devices_only_note")},
+}
 
 print [[
       <br>
-      <div id="table-mac"></div><br><br>]] print(i18n("notes")) print[[<ul>]]
+      <div class='table-responsive'><div id="table-mac"></div></div>]]
 
-if no_pools then
-   print([[<li>]]..i18n("unknown_devices.no_pools")..[[</li>]])
-end
-
-print([[<li>]]..i18n("unknown_devices.devices_only_note")..[[</li>]])
+print(ui_utils.render_notes(notes))
 
 print[[
-   </ul>
 	 <script>
 
    function assignDevicePool(mac_address) {
@@ -74,7 +74,7 @@ print[[
       params.pool = $("#device_target_pool").val();
       params.member = mac_address;
       params.csrf = "]] print(ntop.getRandomCSRFValue()) print[[";
-      paramsToForm('<form method="post"></form>', params).appendTo('body').submit();
+      NtopUtils.paramsToForm('<form method="post"></form>', params).appendTo('body').submit();
    }
 
 	 var url_update = "]]
@@ -83,10 +83,10 @@ print(getPageUrl(ntop.getHttpPrefix().."/lua/get_unknown_devices_data.lua", page
 
 print ('";')
 
-print [[ 
+print [[
            $("#table-mac").datatable({
                         title: "Mac List",
-			url: url_update , 
+			url: url_update ,
 ]]
 
 print('title: "",\n')
@@ -192,7 +192,7 @@ print[[
 
    if isAdministrator() then
       print[[
-         datatableAddActionButtonCallback.bind(this)(7, "mac_to_assign ='" + device_mac + "'; $('#assign_device_dialog_mac').html('" + device_mac +"'); $('#assign_device_dialog').modal('show');", "]] print(i18n("unknown_devices.assign_pool")) print[[");]]
+         datatableAddActionButtonCallback.bind(this)(7, "mac_to_assign ='" + device_mac + "'; $('#assign_device_dialog_mac').html('" + device_mac +"'); $('#assign_device_dialog').modal('show');", "<i class='fas fa-ring'></i>");]]
    end
 
 print[[

@@ -16,14 +16,12 @@ local rest_utils = require("rest_utils")
 
 --
 -- Read timeseries data
--- Example: curl -u admin:admin -d '{"ifid": 3, "ts_schema":"host:traffic", "ts_query": "host:192.168.1.98", "epoch_begin": "1532180495", "epoch_end": "1548839346"}' http://localhost:3000/lua/rest/v1/get/timeseries/ts.lua
+-- Example: curl -u admin:admin -H "Content-Type: application/json" -d '{"ifid": 3, "ts_schema":"host:traffic", "ts_query": "host:192.168.1.98", "epoch_begin": "1532180495", "epoch_end": "1548839346"}' http://localhost:3000/lua/rest/v1/get/timeseries/ts.lua
 --
 -- NOTE: in case of invalid login, no error is returned but redirected to login
 --
 
-sendHTTPHeader('application/json')
-
-local rc = rest_utils.consts_ok
+local rc = rest_utils.consts.success.ok
 local res = {}
 
 local ifid = _GET["ifid"]
@@ -37,8 +35,8 @@ local ts_aggregation   = _GET["ts_aggregation"]
 local no_fill = tonumber(_GET["no_fill"])
 
 if isEmptyString(ifid) then
-  rc = rest_utils.consts_invalid_interface
-  print(rest_utils.rc(rc))
+  rc = rest_utils.consts.err.invalid_interface
+  rest_utils.answer(rc)
   return
 end
 
@@ -141,8 +139,8 @@ if res == nil then
     res["error"] = ts_utils.getLastErrorMessage()
   end
 
-  rc = rest_utils.consts_internal_error
-  print(rest_utils.rc(rc, res))
+  rc = rest_utils.consts.err.internal_error
+  rest_utils.answer(rc, res)
   return
 end
 
@@ -209,4 +207,4 @@ if extended_times then
   end
 end
 
-print(rest_utils.rc(rc, res))
+rest_utils.answer(rc, res)

@@ -44,6 +44,7 @@ class GenericHash {
   u_int32_t num_hashes; /**< Number of hash */
   u_int32_t current_size; /**< Current size of hash (including idle or ready-to-purge elements) */
   u_int32_t max_hash_size; /**< Max size of hash */
+  u_int32_t upper_num_visited_entries; /**< Max number of entries to purge per run */
   RwLock **locks;
   NetworkInterface *iface; /**< Pointer of network interface for this generic hash */
   u_int last_purged_hash; /**< Index of last purged hash */
@@ -55,8 +56,9 @@ class GenericHash {
     u_int64_t num_purged;
   } entry_state_transition_counters;
 
-  vector<GenericHashEntry*> *idle_entries;             /**< Vector used by the offline thread in charge of deleting hash table entries */
-  vector<GenericHashEntry*> *idle_entries_shadow;      /**< Vector prepared by the purgeIdle and periodically swapped to idle_entries */
+  vector<GenericHashEntry*> *idle_entries_in_use;   /**< Vector used by the offline thread in charge to hold idle entries but still in use */
+  vector<GenericHashEntry*> *idle_entries;          /**< Vector used by the offline thread in charge of deleting hash table entries */
+  vector<GenericHashEntry*> *idle_entries_shadow;   /**< Vector prepared by the purgeIdle and periodically swapped to idle_entries */
   
  public:
 
@@ -92,7 +94,7 @@ class GenericHash {
    *
    * @return The number of idle entries.
    */
-  int32_t getNumIdleEntries() const;
+  u_int32_t getNumIdleEntries() const;
 
   /**
    * @brief Add new entry to generic hash.
@@ -121,20 +123,11 @@ class GenericHash {
 	    bool (*walker)(GenericHashEntry *h, void *user_data, bool *entryMatched), void *user_data);
 
   /**
-   * @brief Hash table walker used only by an offline thread in charge of performing entries state changes
-   * @details This method traverses all the entries of the hash table, including those that are idle
-   *          and have been previously placed in the idle_entries vector, calling the walker function
-   *          on each of them. Entries found in the idle_entries vector are deleted right after the call
-   *          of the walker function against them.
-   *          This method should only be called by an offline thread in charge of performing entries state changes (e.g., from
-   *          protocol detected to activ) and operations associated to entries state changes (e.g., the
-   *          call of a lua script against the entry).
-   *
-   * @param walker A pointer to the comparison function.
-   * @param user_data Value to be compared with the values of hash.
+   * @brief Purge idle entries that have been previous idled by purgeIdle() via periodic calls
+   * @return The number of purged entries
    */
-  virtual void walkAllStates(bool (*walker)(GenericHashEntry *h, void *user_data), void *user_data);
-
+  u_int64_t purgeQueuedIdleEntries();
+  
   /**
    * @brief Purge idle hash entries.
    *

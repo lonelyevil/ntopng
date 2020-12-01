@@ -9,37 +9,39 @@ package.path = dirs.installdir .. "/scripts/lua/modules/pools/?.lua;" .. package
 require "lua_utils"
 local json = require ("dkjson")
 local rest_utils = require("rest_utils")
+local tracker = require("tracker")
 
 --
 -- Remove a ntopng user
--- Example: curl -u admin:admin -d '{"username": "mario"}' http://localhost:3000/lua/rest/v1/delete/ntopng/user.lua
+-- Example: curl -u admin:admin -H "Content-Type: application/json" -d '{"username": "mario"}' http://localhost:3000/lua/rest/v1/delete/ntopng/user.lua
 --
 -- NOTE: in case of invalid login, no error is returned but redirected to login
 --
 
-sendHTTPHeader('application/json')
-
-local rc = rest_utils.consts_ok
+local rc = rest_utils.consts.success.ok
 local res = {}
 
 if not haveAdminPrivileges() then
-   print(rest_utils.rc(rest_utils.consts_not_granted, res))
+   rest_utils.answer(rest_utils.consts.err.not_granted, res)
    return
 end
 
 local username = _POST["username"]
 
 if username == nil then
-   print(rest_utils.rc(rest_utils.consts_invalid_args, res))
+   rest_utils.answer(rest_utils.consts.err.invalid_args, res)
    return
 end
 
 username = string.lower(username)
 
 if not ntop.deleteUser(username) then
-   print(rest_utils.rc(rest_utils.consts_delete_user_failed, res))
+   rest_utils.answer(rest_utils.consts.err.delete_user_failed, res)
    return
 end
 
-print(rest_utils.rc(rc, res))
+rest_utils.answer(rc, res)
 
+-- TRACKER HOOK
+-- Note: already tracked by ntop.deleteUser
+-- tracker.log('delete_ntopng_user', { username = username })

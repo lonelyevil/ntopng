@@ -12,7 +12,7 @@ local json = require("dkjson")
 local ts_utils = require("ts_utils_core")
 local plugins_utils = require("plugins_utils")
 local periodic_activities_utils = require "periodic_activities_utils"
-local system_utils = require("system_utils")
+local cpu_utils = require("cpu_utils")
 local callback_utils = require("callback_utils")
 local recording_utils = require("recording_utils")
 local remote_assistance = require("remote_assistance")
@@ -21,22 +21,20 @@ local rest_utils = require("rest_utils")
 
 --
 -- Read information about an interface
--- Example: curl -u admin:admin -d '{"ifid": "1"}' http://localhost:3000/lua/rest/v1/get/interface/data.lua
+-- Example: curl -u admin:admin -H "Content-Type: application/json" -d '{"ifid": "1"}' http://localhost:3000/lua/rest/v1/get/interface/data.lua
 --
 -- NOTE: in case of invalid login, no error is returned but redirected to login
 --
 
-sendHTTPHeader('application/json')
-
-local rc = rest_utils.consts_ok
+local rc = rest_utils.consts.success.ok
 local res = {}
 
 local ifid = _GET["ifid"]
 local iffilter = _GET["iffilter"]
 
 if isEmptyString(ifid) and isEmptyString(iffilter) then
-   rc = rest_utils.consts_invalid_interface
-   print(rest_utils.rc(rc))
+   rc = rest_utils.consts.err.invalid_interface
+   rest_utils.answer(rc)
    return
 end
 
@@ -112,7 +110,15 @@ function dumpInterfaceStats(ifid)
       if prefs.are_alerts_enabled == true then
          res["engaged_alerts"]     = ifstats["num_alerts_engaged"] or 0
          res["dropped_alerts"]     = ifstats["num_dropped_alerts"] or 0
-	 res["alerted_flows"]      = ifstats["num_alerted_flows"] or 0
+
+	 -- Active flow alerts: total
+	 res["alerted_flows"]         = ifstats["num_alerted_flows"] or 0
+
+	 -- Active flow alerts: breakdown
+	 res["alerted_flows_notice"]  = ifstats["num_alerted_flows_notice"]  or 0
+	 res["alerted_flows_warning"] = ifstats["num_alerted_flows_warning"] or 0
+	 res["alerted_flows_error"]   = ifstats["num_alerted_flows_error"]   or 0
+
          res["has_alerts"]         = ifstats["has_alerts"]
          res["ts_alerts"] = {}
 
@@ -146,7 +152,7 @@ function dumpInterfaceStats(ifid)
 	    res["out_of_maintenance"] = true
 	 end
       end
-      res["system_host_stats"] = system_utils.systemHostStats()
+      res["system_host_stats"] = cpu_utils.systemHostStats()
       res["hosts_pctg"] = hosts_pctg
       res["flows_pctg"] = flows_pctg
       res["macs_pctg"] = macs_pctg
@@ -194,20 +200,36 @@ function dumpInterfaceStats(ifid)
 
          res["zmqRecvStats"] = {}
          res["zmqRecvStats"]["flows"] = ifstats.zmqRecvStats.flows
+         res["zmqRecvStats"]["dropped_flows"] = ifstats.zmqRecvStats.dropped_flows
 	 res["zmqRecvStats"]["events"] = ifstats.zmqRecvStats.events
 	 res["zmqRecvStats"]["counters"] = ifstats.zmqRecvStats.counters
 	 res["zmqRecvStats"]["zmq_msg_rcvd"] = ifstats.zmqRecvStats.zmq_msg_rcvd
 	 res["zmqRecvStats"]["zmq_msg_drops"] = ifstats.zmqRecvStats.zmq_msg_drops
-	 res["zmqRecvStats"]["zmq_avg_msg_flows"] = math.max(1, ifstats.zmqRecvStats.flows / (ifstats.zmqRecvStats.zmq_msg_rcvd + 1)) 
+	 res["zmqRecvStats"]["zmq_avg_msg_flows"] = math.max(1, ifstats.zmqRecvStats.flows / (ifstats.zmqRecvStats.zmq_msg_rcvd + 1))
 
 	 res["zmq.num_flow_exports"] = ifstats["zmq.num_flow_exports"] or 0
          res["zmq.num_exporters"] = ifstats["zmq.num_exporters"] or 0
+
+	 res["zmq.drops.export_queue_full"] = ifstats["zmq.drops.export_queue_full"] or 0
+	 res["zmq.drops.flow_collection_drops"] = ifstats["zmq.drops.flow_collection_drops"] or 0
+	 res["zmq.drops.flow_collection_udp_socket_drops"] = ifstats["zmq.drops.flow_collection_udp_socket_drops"] or 0
       end
 
       res["tcpPacketStats"] = {}
       res["tcpPacketStats"]["retransmissions"] = ifstats.tcpPacketStats.retransmissions
       res["tcpPacketStats"]["out_of_order"]    = ifstats.tcpPacketStats.out_of_order
       res["tcpPacketStats"]["lost"]            = ifstats.tcpPacketStats.lost
+
+      if interface.isSyslogInterface() then
+        res["syslog"] = {}
+        res["syslog"]["tot_events"] = ifstats.syslog.tot_events
+        res["syslog"]["malformed"] = ifstats.syslog.malformed
+        res["syslog"]["dispatched"] = ifstats.syslog.dispatched
+        res["syslog"]["unhandled"] = ifstats.syslog.unhandled
+        res["syslog"]["alerts"] = ifstats.syslog.alerts
+        res["syslog"]["host_correlations"] = ifstats.syslog.host_correlations
+        res["syslog"]["flows"] = ifstats.syslog.flows
+      end
 
       if(ifstats["profiles"] ~= nil) then
          res["profiles"] = ifstats["profiles"]
@@ -259,4 +281,4 @@ else
    res = dumpInterfaceStats(ifid)
 end
 
-print(rest_utils.rc(rc, res))
+rest_utils.answer(rc, res)

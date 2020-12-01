@@ -11,8 +11,10 @@ print [[
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-	<h3 id="add_user_dialog_label">]]print(add_user_msg)print[[</h3>
-	<button type="button" class="close" data-dismiss="modal" aria-hidden="true">x</button>
+	<h5 class='modal-title' id="add_user_dialog_label">]]print(add_user_msg)print[[</h5>
+  <button type="button" class="close" data-dismiss="modal" aria-hidden="true">
+    <span aria-hidden="true">&times;</span>
+  </button>
       </div>
 
 <div class="modal-body">
@@ -232,7 +234,7 @@ print[[
     } else {
       var arrayOfStrings = $("#allowed_networks_input").val().split(",");
       for (var i=0; i < arrayOfStrings.length; i++) {
-	if(!is_network_mask(arrayOfStrings[i])) {
+	if(!NtopUtils.is_network_mask(arrayOfStrings[i])) {
 	  add_user_alert.error("Invalid network list specified ("+arrayOfStrings[i]+")");
 	  return(false);
 	}

@@ -2,23 +2,31 @@ odnl> Do not add anything above
 AC_INIT([ntopng],[@VERSION@])
 dnl> Do not add anything above
 
-AC_ARG_WITH(llvm_sanitizer,     [  --with-llvm-sanitizer   Build with support for the LLVM address sanitizer])
+AC_ARG_WITH(sanitizer,     [  --with-sanitizer   Build with support for the LLVM address sanitizer])
 
 CPPFLAGS="${CPPFLAGS} -Wno-address-of-packed-member -Wno-unused-function"
-
-AS_IF([test "${with_llvm_sanitizer+set}" = set],[
-     CPPFLAGS="${CPPFLAGS} -O2 -Wno-unused-value -fsanitize=address -fno-omit-frame-pointer"
-     LDFLAGS="${LDFLAGS} -fsanitize=address"
-     CC=clang
-     CXX=clang++
-])
-
 AC_PROG_CPP
-
 AC_PROG_CXX
 
+
+SYSTEM=`uname -s`
+dnl> On Ubuntu do sudo apt-get install -y clang-10  clang-tools-10
+AS_IF([test "${with_sanitizer+set}" = set],[
+     CFLAGS="-g -O0 -Wall -Wno-unused-value -fsanitize=address -fsanitize=undefined -fno-sanitize=alignment -fsanitize=leak -fno-omit-frame-pointer"
+     CPPFLAGS="-g -O0 -Wall -Wno-unused-value -fsanitize=address -fsanitize=undefined -fno-sanitize=alignment -fsanitize=leak -fno-omit-frame-pointer"
+     LDFLAGS="${LDFLAGS} -fsanitize=address -fsanitize=undefined -fno-sanitize=alignment -fsanitize=leak"
+     if test $SYSTEM = "Darwin"; then
+      CC=clang
+      CXX=clang++
+    else
+     CC=clang-10
+     CXX=clang++-10
+   fi
+    CPP=$CC
+])
+
 dnl> Add /usr/local/ /opt/local
-CFLAGS="-I${PWD} -I${PWD}/include"
+CFLAGS="${CFLAGS} -I${PWD} -I${PWD}/include"
 CPPFLAGS="${CPPFLAGS} -I${PWD} -I${PWD}/include"
 NTOPNG_VERSION="@VERSION@"
 NTOPNG_SHORT_VERSION="@SHORT_VERSION@"
@@ -225,6 +233,8 @@ else
   fi
 fi
 
+AC_CHECK_LIB([gcrypt], [gcry_cipher_checktag], [LDFLAGS="${LDFLAGS} -lgcrypt"])
+
 AC_MSG_CHECKING(for ntopng professional edition)
 
 REDIS_SERVICE="redis.service"
@@ -237,8 +247,8 @@ if [ test -f /usr/bin/lsb_release ]; then
 fi
 
 SERVICE_ALIAS=
-SERVICE_REQUIRES=${REDIS_SERVICE}
-SERVICE_WANTS=
+SERVICE_REQUIRES=
+SERVICE_WANTS=${REDIS_SERVICE}
 if test "$MACHINE" = "armv7l"; then
   SERVICE_AFTER="network.target syslog.target ${REDIS_SERVICE}"
   if test "${with_nedge+set}" = "set"; then
@@ -250,7 +260,7 @@ elif test "${with_nedge+set}" = "set"; then
   SERVICE_ALIAS="nedge.service"
 else
   SERVICE_AFTER="network.target syslog.target ${REDIS_SERVICE} pf_ring.service cluster.service mysql.service"
-  SERVICE_WANTS="pf_ring.service cluster.service"
+  SERVICE_WANTS="${SERVICE_WANTS} pf_ring.service cluster.service"
 fi
 
 APP=
@@ -265,7 +275,7 @@ AC_MSG_RESULT(yes)
 PRO_OBJECTS='$(patsubst pro/%.cpp, pro/%.o, $(wildcard pro/*.cpp))'
 
 if test "${with_nedge+set}" != set; then
-  if test $SYSTEM = "FreeBSD" || test $SYSTEM = "Darwin" || test $MACHINE = "armv7l" ; then
+  if test $SYSTEM = "FreeBSD" || test $SYSTEM = "Darwin" || test $MACHINE = "armv7l" || test $MACHINE = "aarch64"; then
     cd ../PF_RING/userland/nbpf; ./configure; make; cd -
 
     dnl> nbpf for FreeBSD is linked statically
@@ -520,7 +530,7 @@ if test -f "/etc/centos-release"; then
 fi
 
 CENTOS_N2N_DEP=""
-CFLAGS="-Wall $CFLAGS"
+CFLAGS="${CFLAGS} -Wall"
 OS=""
 if test $SYSTEM = "Darwin"; then
    dnl> https://github.com/google/sanitizers/wiki/AddressSanitizerFlags
@@ -538,6 +548,12 @@ if test $SYSTEM = "Darwin"; then
    fi
 else
   if test $SYSTEM = "Linux"; then
+    if [ test -f /usr/bin/clang++ ]; then
+      CC=clang
+      CXX=clang++
+      AC_MSG_RESULT(Using clang++ compiler)
+    fi
+    
     if [ test -f /etc/redhat-release ]; then
        if [ test -f /usr/bin/lsb_release ]; then
        	  dnl> CentOS 7
@@ -770,6 +786,7 @@ AC_CONFIG_FILES(doc/doxygen.conf)
 AC_CONFIG_FILES(httpdocs/misc/ntopng-utils-manage-config)
 AC_CONFIG_FILES(httpdocs/misc/ntopng-utils-manage-updates)
 AC_CONFIG_FILES(packages/etc/systemd/system/ntopng.service)
+AC_CONFIG_FILES(packages/etc/systemd/system/ntopng@.service)
 
 AC_OUTPUT
 

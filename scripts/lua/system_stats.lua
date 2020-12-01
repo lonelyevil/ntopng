@@ -11,7 +11,7 @@ local page_utils = require("page_utils")
 local plugins_utils = require("plugins_utils")
 local alert_consts = require("alert_consts")
 local internals_utils = require "internals_utils"
-local system_utils = require("system_utils")
+local cpu_utils = require("cpu_utils")
 local ts_utils = require "ts_utils"
 local graph_utils = require("graph_utils")
 local alert_utils = require("alert_utils")
@@ -23,8 +23,6 @@ if not isAllowedSystemInterface() then
 end
 
 sendHTTPContentTypeHeader('text/html')
-
-
 page_utils.set_active_menu_entry(page_utils.menu_entries.system_status)
 
 dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
@@ -66,11 +64,12 @@ page_utils.print_navbar(title, url,
 if(page == "overview") then
    local storage_utils = require("storage_utils")
 
+   print("<div class='table-responsive-lg table-responsive-md'>")
    print("<table class=\"table table-bordered table-striped\">\n")
 
    local system_rowspan = 1
    local ntopng_rowspan = 20
-   local system_host_stats = system_utils.systemHostStats()
+   local system_host_stats = cpu_utils.systemHostStats()
    local has_system = false
 
    if system_host_stats["cpu_load"] ~= nil then  system_rowspan = system_rowspan + 1; has_system = true end
@@ -123,13 +122,26 @@ if(page == "overview") then
       for i=0,32 do
          msg = ntop.listIndexCache("ntopng.trace", i)
          if(msg ~= nil) then
-            print(noHtml(msg).."<br>\n")
+
+            local text = noHtml(msg)
+
+            -- encapsule the ERROR or WARNING string in a badge
+            -- so the log are more visible
+            if text:find("ERROR") then
+               text = text:gsub("(ERROR)(:)", "<span class='badge badge-danger'>%1</span>")
+            elseif text:find("WARNING") then
+               text = text:gsub("(WARNING)(:)", "<span class='badge badge-warning'>%1</span>")
+            end
+
+            print(text)
+            print("<br>")
          end
       end
       print("</code></div></td></tr>\n")
    end
 
-   print("</table>\n")
+   print("</table>")
+   print("</div>")
 
    print [[
    <script>
@@ -172,14 +184,14 @@ elseif(page == "historical" and ts_creation) then
 	    schema = "system:cpu_load",
 	    label=i18n("about.cpu_load"),
 	    metrics_labels = {i18n("about.cpu_load")},
-	    value_formatter = {"ffloat"},
+	    value_formatter = {"NtopUtils.ffloat"},
 	    skip = skip_cpu_load,
 	 },
 	 {
 	    schema="system:cpu_states",
 	    label=i18n("about.cpu_states"),
 	    metrics_labels = {i18n("about.iowait"), i18n("about.active"), i18n("about.idle")},
-	    value_formatter = {"fpercent"}
+	    value_formatter = {"NtopUtils.fpercent"}
 	 },
 	 {
 	    schema="process:resident_memory",
@@ -201,15 +213,14 @@ elseif((page == "alerts") and isAdministrator()) then
    interface.select(getSystemInterfaceId())
 
    _GET["ifid"] = getSystemInterfaceId()
-   _GET["entity_excludes"] = string.format("%u,%u,%u",
-      alert_consts.alertEntity("influx_db"), alert_consts.alertEntity("snmp_device"),
-      alert_consts.alertEntity("am_host"))
 
-   alert_utils.drawAlerts()
+   alert_utils.drawAlerts({
+      is_standalone = true
+   })
 
    interface.select(tostring(cur_id))
 elseif page == "internals" then
-   internals_utils.printInternals(getSystemInterfaceId(), false --[[ hash tables ]], true --[[ periodic activities ]], false --[[ user scripts]])
+   internals_utils.printInternals(getSystemInterfaceId(), false --[[ hash tables ]], true --[[ periodic activities ]], false --[[ user scripts]], true --[[ queues --]])
 end
 
 -- #######################################################

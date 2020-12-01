@@ -12,6 +12,7 @@ ntopng can be used in combination with other ntop tools. Documentation to use nt
    how_to_start/index
    cli_options
    web_gui/index
+   alerts/index
    active_monitoring/index
    self_monitoring/index
    using_with_other_tools/index
@@ -20,6 +21,7 @@ ntopng can be used in combination with other ntop tools. Documentation to use nt
    advanced_features/index
    operating_ntopng_on_large_networks
    faq
+   performances/index
    plugins/index
    api/index
 

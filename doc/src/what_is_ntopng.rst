@@ -25,11 +25,11 @@ Installing on MacOS
 -------------------
 
 MacOS installation packages can be found at
-http://packages.ntop.org/ and are installed with a graphical user interface.
-ntopng requires redis to be installed in order to start. During the ntopng installation,
-if redis is not present, redis is installed and activated, otherwise the one already installed on
+http://packages.ntop.org/ and are installed with a GUI.
+ntopng requires Redis to be installed in order to start. During the ntopng installation,
+if Redis is not present, Redis is installed and activated, otherwise the one already installed on
 the system is used. After the installation, ntopng is started and active on local port 3000
-(i.e. ntopng is available at http://127.0.0.1:3000). If you want to deinstall ntopng you can
+(i.e. ntopng is available at http://127.0.0.1:3000). If you want to uninstall ntopng you can
 open a terminal and type :code:`sudo /usr/local/bin/ntopng-uninstall.sh`
 
 To enable geolocation, MacOS packages require database files to be manually placed under :code:`/usr/local/share/ntopng/httpdocs/geoip`. Detailed instructions on how to obtain database files and install them are available at https://github.com/ntop/ntopng/blob/dev/doc/README.geolocation.md/. Once the files have been downloaded and placed in the folder, a restart of ntopng is necessary to read load them.
@@ -46,7 +46,7 @@ The ntopng service can be started/stopped using the launchctl command:
 Installing on Windows
 ---------------------
 
-Only the development build binary is available for windows. The binary can
+Only the development build binary is available for Windows. The binary can
 be downloaded from the `Windows package repository
 <https://packages.ntop.org/Windows/>`_.
 
@@ -87,7 +87,7 @@ in the ntopng installer.
    installation, without any extra step to download or install npcap
    drivers.
 
-The windows package does NOT contain geolocation files, due to restrictions as
+The Windows package does NOT contain geolocation files, due to restrictions as
 reported later in this section. So you need to download the geolocation files
 and then copy them into C:\\Program Files\\ntopng\\httpdocs\\geoip\\ directory, and
 then restart ntopng.
@@ -104,7 +104,7 @@ A full list of features and a comparison table is available in the ntopng
 ntopng Community
 ----------------
 
-The Community version is free to use and opensource. The full source code can be found on `Github <https://github.com/ntop/ntopng>`_.
+The Community version is free to use and open source. The full source code can be found on `Github <https://github.com/ntop/ntopng>`_.
 
 ntopng Professional
 -------------------
@@ -114,7 +114,7 @@ The Professional version offers some extra features with respect to the Communit
 ntopng Enterprise M
 -------------------
 
-The Enterprise M version offers some extra features with respect to the Professional version, which are articularly useful for large organizations, including SNMP support, fast MySQL export, advanced alerts management, high performance flow indexing.
+The Enterprise M version offers some extra features with respect to the Professional version, which are particularly useful for large organizations, including SNMP support, fast MySQL export, advanced alerts management, high performance flow indexing.
 
 ntopng Enterprise L
 -------------------
@@ -132,7 +132,7 @@ License is per-server and is released according to the EULA (End User
 License Agreement). Each license is perpetual (i.e. it does not
 expire) and it allows to install updates for one year since
 purchase/license issue. This means that a license generated on
-1/1/2020 will be able to activate new versions of the software until
+1/1/2021 will be able to activate new versions of the software until
 12/31/2021. If you want to install new versions of the software release
 after that date, you need to renew the maintenance or avoid further
 updating the software. For source-based ntopng you can refer to the
@@ -153,7 +153,7 @@ when the license has been purchased on https://shop.ntop.org/.
    (example: :code:`export http_proxy=http://<ip>:<port>`).
 
 Once the license has been generated, it can be applied to ntopng
-simply by visiting page "Help"->"About" of the web user interface and
+simply by visiting page "Help"->"About" of the web GUI and
 pasting the license key in the license form.
 
 Alternatively, the license key can be placed in a one-line file

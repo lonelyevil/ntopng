@@ -32,11 +32,6 @@ typedef struct {
   u_int64_t last, next;
 } TCPSeqNum;
 
-typedef struct {
-  u_int16_t score;
-  char *script_key;
-} StatusInfo;
-
 class Flow : public GenericHashEntry {
  private:
   Host *cli_host, *srv_host;
@@ -47,13 +42,19 @@ class Flow : public GenericHashEntry {
   u_int32_t vrfId;
   u_int32_t srcAS, dstAS, prevAdjacentAS, nextAdjacentAS;
   u_int8_t protocol, src2dst_tcp_flags, dst2src_tcp_flags;
-  u_int16_t cli_score, srv_score, flow_score;
-  bool peers_score_accounted;
+  u_int8_t src2dst_tcp_zero_window:1, dst2src_tcp_zero_window:1, zero_window_alert_triggered:1, _pad:5;
+  u_int16_t cli_host_score[MAX_NUM_SCORE_CATEGORIES], srv_host_score[MAX_NUM_SCORE_CATEGORIES], flow_score;
   struct ndpi_flow_struct *ndpiFlow;
   ndpi_risk ndpi_flow_risk_bitmap;
-  Bitmap status_map;              /* The bitmap of the possible problems on the flow */
-  StatusInfo *status_infos;       /* An array of 64 StatusInfo, one for each status (lazy allocation upon setStatus call) */
-  FlowStatus alerted_status;      /* This is the status which has triggered the alert */
+  /* The bitmap of all possible flow statuses set by flow user script hooks. When no status is set, the 
+     flow is in status_normal.
+
+     A flow can have multiple statuses but at most ONE of its statuses is the alerted status
+     of a flow, which is written into `alerted_status`.
+  */
+  Bitmap status_map;
+  FlowStatus alerted_status;       /* This is the status which has triggered the alert */
+  u_int16_t  alerted_status_score; /* The score associated to the alerted status */
   AlertType alert_type;
   AlertLevel alert_level;
   char *alert_status_info;        /* Alert specific status info */
@@ -88,6 +89,7 @@ class Flow : public GenericHashEntry {
   json_object *json_info;
   ndpi_serializer *tlv_info;
   char *host_server_name, *bt_hash;
+  IEC104Stats *iec104;
   OperatingSystem operating_system;
 #ifdef HAVE_NEDGE
   u_int32_t last_conntrack_update; 
@@ -95,7 +97,7 @@ class Flow : public GenericHashEntry {
 #endif
   char *external_alert;
   bool trigger_immediate_periodic_update; /* needed to process external alerts */
-  bool pending_lua_call_protocol_detected; /* Whether the protocol detected lua script has been called on this flow */
+  FlowLuaCall current_flow_lua_call;   /* Indicate the latest flow lua call performed */
   time_t next_lua_call_periodic_update; /* The time at which the periodic lua script on this flow shall be called */
   u_int32_t periodic_update_ctr;
 
@@ -111,7 +113,8 @@ class Flow : public GenericHashEntry {
     
   union {
     struct {
-      char *last_url, *last_method;
+      char *last_url;
+      ndpi_http_method last_method;
       char *last_content_type;
       u_int16_t last_return_code;
     } http;
@@ -170,6 +173,7 @@ class Flow : public GenericHashEntry {
   struct {
     u_int32_t device_ip;
     u_int16_t in_index, out_index;
+    u_int16_t device_id;
   } flow_device;
 
   /* eBPF Information */
@@ -243,7 +247,19 @@ class Flow : public GenericHashEntry {
 			  const struct timeval *tv,
 			  u_int64_t diff_sent_packets, u_int64_t diff_sent_bytes,
 			  u_int64_t diff_rcvd_packets, u_int64_t diff_rcvd_bytes) const;
-  void periodic_dump_check(const struct timeval *tv, bool no_time_left);
+  /* 
+     Check (and possibly enqueues) the flow for the execution of lua user script hooks
+     - hookProtocolDetectedCheck is executed when the flow enters state hash_entry_state_flow_protocoldetected
+     - hookPeriodicUpdateCheck is executed periodically, when the flow is in state hash_entry_state_active
+     - hookFlowEndCheck is executed when the flow enters state hash_entry_state_idle
+   */
+  void hookProtocolDetectedCheck(time_t t);
+  void hookPeriodicUpdateCheck(time_t t);
+  void hookFlowEndCheck(time_t t);
+  /*
+    Check (and possibly enqueues) the flow for dump
+   */
+  void dumpCheck(time_t t, bool last_dump_before_free);
   void updateCliJA3();
   void updateSrvJA3();
   void updateHASSH(bool as_client);
@@ -254,31 +270,13 @@ class Flow : public GenericHashEntry {
   void updateProtocol(ndpi_protocol proto_id);
   const char* cipher_weakness2str(ndpi_cipher_weakness w) const;
   bool get_partial_traffic_stats(PartializableFlowTrafficStats **dst, PartializableFlowTrafficStats *delta, bool *first_partial) const;
-  /**
-   * @brief Method to call a given lua script on the flow
-   * @details This method calls a lua script on the flow if there is time, that is, when quick is false. Otherwise
-   *          it keep track of skipped calls by opportunely increasing certain counters in the lua engine.
-   *
-   * @param flow_lua_call The time of the call that should be performed on the flow
-   * @param tv Pointer to a timeval struct indicating the current time at which the update is performed
-   * @param periodic_ht_state_update_user_data Pointer to a structure holding update-related data (including the lua engine)
-   *
-   * @return Whether the call has been executed successfully or if there were issues during the execution
-   */  
-  FlowLuaCallExecStatus performLuaCall(FlowLuaCall flow_lua_call, const struct timeval *tv, periodic_ht_state_update_user_data_t *periodic_ht_state_update_user_data);
-  /**
-   * @brief Method to possibly call lua scripts on the flow
-   * @details This method evaluates the states of the flow and possibly calls lua functions on this flow.
-   *
-   * @param tv Pointer to a timeval struct indicating the current time at which the update is performed
-   * @param periodic_ht_state_update_user_data Pointer to a structure holding update-related data (including the lua engine)
-   */
-  void performLuaCalls(const struct timeval *tv, periodic_ht_state_update_user_data_t *periodic_ht_state_update_user_data);
   void lua_tos(lua_State* vm);
 
   void updateEntropy(struct ndpi_analyze_struct *e, u_int8_t *payload, u_int payload_len);
   void lua_entropy(lua_State* vm);
- 
+  void luaScore(lua_State* vm);
+  void luaIEC104(lua_State* vm);
+  
  public:
   Flow(NetworkInterface *_iface,
        u_int16_t _vlanId, u_int8_t _protocol,
@@ -289,12 +287,11 @@ class Flow : public GenericHashEntry {
   ~Flow();
 
   inline Bitmap getStatusBitmap()     const     { return(status_map);           }
-  bool setStatus(FlowStatus status, u_int16_t flow_inc, u_int16_t cli_inc, u_int16_t srv_inc, const char*script_key);
-  void clearStatus(FlowStatus status);
-  bool triggerAlert(FlowStatus status, AlertType atype, AlertLevel severity, const char*alert_json);
-  FlowStatus getPredominantStatus() const;
-  inline const char* getStatusInfo() const      { return(alert_status_info);    }
-  void statusInfosLua(lua_State* vm) const;
+  bool setStatus(FlowStatus status, u_int16_t flow_inc, u_int16_t cli_inc, u_int16_t srv_inc, const char*script_key, ScriptCategory script_category);
+  bool triggerAlert(FlowStatus status, AlertType atype, AlertLevel severity, u_int16_t alerted_status_score, const char* alert_json);
+  FlowStatus getAlertedStatus() const;
+  inline AlertLevel getAlertedSeverity() const { return alert_level;        };
+  inline const char* getStatusInfo()     const { return(alert_status_info); };
 
   bool isBlacklistedFlow()   const;
   bool isBlacklistedClient() const;
@@ -309,6 +306,7 @@ class Flow : public GenericHashEntry {
   inline bool isTLS()  const { return(isProto(NDPI_PROTOCOL_TLS));  }
   inline bool isSSH()  const { return(isProto(NDPI_PROTOCOL_SSH));  }
   inline bool isDNS()  const { return(isProto(NDPI_PROTOCOL_DNS));  }
+  inline bool isIEC60870()  const { return(isProto(NDPI_PROTOCOL_IEC60870));  }
   inline bool isMDNS() const { return(isProto(NDPI_PROTOCOL_MDNS)); }
   inline bool isSSDP() const { return(isProto(NDPI_PROTOCOL_SSDP)); }
   inline bool isNetBIOS() const { return(isProto(NDPI_PROTOCOL_NETBIOS)); }
@@ -330,6 +328,9 @@ class Flow : public GenericHashEntry {
   void flow2alertJson(ndpi_serializer *serializer, time_t now);
   json_object* flow2json();
   json_object* flow2es(json_object *flow_object);
+
+  void triggerZeroWindowAlert(bool *as_client, bool *as_server);
+  
   inline u_int8_t getTcpFlags()        const { return(src2dst_tcp_flags | dst2src_tcp_flags);  };
   inline u_int8_t getTcpFlagsCli2Srv() const { return(src2dst_tcp_flags);                      };
   inline u_int8_t getTcpFlagsSrv2Cli() const { return(dst2src_tcp_flags);                      };
@@ -358,6 +359,7 @@ class Flow : public GenericHashEntry {
   inline void  setServerName(char *v)  { if(host_server_name) free(host_server_name);  host_server_name = v; }
   void updateTcpFlags(const struct bpf_timeval *when,
 		      u_int8_t flags, bool src2dst_direction);
+  void updateTcpWindow(u_int16_t window, bool src2dst_direction);
   void updateTcpSeqIssues(const ParsedFlow *pf);
   void updateDNS(ParsedFlow *zflow);
   void updateHTTP(ParsedFlow *zflow);
@@ -378,6 +380,10 @@ class Flow : public GenericHashEntry {
 		     u_int8_t *payload, u_int16_t payload_len);
   void setMatchedPacketPayload(u_int8_t *payload, u_int16_t payload_len);
   void processDNSPacket(const u_char *ip_packet, u_int16_t ip_len, u_int64_t packet_time);
+  void processIEC60870Packet(bool src2dst_direction, const u_char *ip_packet, u_int16_t ip_len,
+			     const u_char *payload, u_int16_t payload_len,
+			     struct timeval *packet_time);
+  
   void endProtocolDissection();
   inline void setCustomApp(custom_app_t ca) {
     memcpy(&custom_app, &ca, sizeof(custom_app));
@@ -486,10 +492,7 @@ class Flow : public GenericHashEntry {
   u_int64_t get_current_packets_cli2srv() const;
   u_int64_t get_current_packets_srv2cli() const;
 
-  /* Methods to handle the flow in-memory lifecycle */
-  void set_hash_entry_state_idle();
   bool is_hash_entry_state_idle_transition_ready() const;
-  void periodic_hash_entry_state_update(void *user_data);
   void hosts_periodic_stats_update(NetworkInterface *iface, Host *cli_host, Host *srv_host, PartializableFlowTrafficStats *partial, bool first_partial, const struct timeval *tv) const;
   void periodic_stats_update(const struct timeval *tv);
   void  set_hash_entry_id(u_int assigned_hash_entry_id);
@@ -503,6 +506,16 @@ class Flow : public GenericHashEntry {
 		       Host *srv, u_int16_t srv_port,
 		       u_int16_t vlan_id,
 		       u_int16_t protocol);
+  /**
+   * @brief Method to call a given lua script on the flow
+   *
+   * @param flow_lua_call The time of the call that should be performed on the flow
+   * @param vm The Lua virtual machine to use
+   *
+   * @return Whether the call has been executed successfully or if there were issues during the execution
+   */
+  FlowLuaCallExecStatus performLuaCall(FlowLuaCall flow_lua_call, FlowAlertCheckLuaEngine *acle);
+
   void lua(lua_State* vm, AddressTree * ptree, DetailsLevel details_level, bool asListElement);
   void lua_get_min_info(lua_State* vm);
   void lua_duration_info(lua_State* vm);
@@ -536,7 +549,7 @@ class Flow : public GenericHashEntry {
 	     const ICMPinfo * const icmp_info,
 	     bool *src2srv_direction) const;
   void sumStats(nDPIStats *ndpi_stats, FlowStats *stats);
-  bool dumpFlow(const struct timeval *tv, NetworkInterface *dumper, bool no_time_left);
+  bool dumpFlow(time_t t, bool last_dump_before_free);
   bool match(AddressTree *ptree);
   void dissectHTTP(bool src2dst_direction, char *payload, u_int16_t payload_len);
   void dissectDNS(bool src2dst_direction, char *payload, u_int16_t payload_len);
@@ -573,6 +586,7 @@ class Flow : public GenericHashEntry {
   inline bool hasInvalidDNSQueryChars()  { return(isDNS() && protos.dns.invalid_chars_in_query); }
   inline bool hasMaliciousSignature()    { return(has_malicious_cli_signature || has_malicious_srv_signature); }
   bool hasRisk(ndpi_risk_enum r) const;
+  bool hasRisks() const;
   inline char* getDNSQuery()        { return(isDNS() ? protos.dns.last_query : (char*)"");  }
   inline void  setDNSQuery(char *v) {
     if(isDNS()) {
@@ -582,22 +596,25 @@ class Flow : public GenericHashEntry {
     }
   }
   inline void  setDNSQueryType(u_int16_t t) { if(isDNS()) { protos.dns.last_query_type = t; } }
-  inline void  setDNSRetCode(u_int16_t c) { if(isDNS()) { protos.dns.last_return_code = c; } }
-  inline u_int16_t getLastQueryType() { return(isDNS() ? protos.dns.last_query_type : 0); }
-  inline u_int16_t getDNSRetCode()  { return(isDNS() ? protos.dns.last_return_code : 0); }
-  inline char* getHTTPURL()         { return(isHTTP() ? protos.http.last_url : (char*)"");   }
-  inline void  setHTTPURL(char *v)  { if(isHTTP()) { if(protos.http.last_url) free(protos.http.last_url);  protos.http.last_url = v; } }
-  inline void  setHTTPMethod(char *v)  { if(isHTTP()) { if(protos.http.last_method) free(protos.http.last_method);  protos.http.last_method = v; } }
-  inline void  setHTTPRetCode(u_int16_t c) { if(isHTTP()) { protos.http.last_return_code = c; } }
-  inline u_int16_t getHTTPRetCode() const { return isHTTP() ? protos.http.last_return_code : 0;           };
-  inline char* getHTTPMethod()      const { return isHTTP() ? protos.http.last_method : (char*)"";        };
-  inline char* getHTTPContentType() const { return(isHTTP() ? protos.http.last_content_type : (char*)""); };
+  inline void  setDNSRetCode(u_int16_t c)   { if(isDNS()) { protos.dns.last_return_code = c; } }
+  inline u_int16_t getLastQueryType()       { return(isDNS() ? protos.dns.last_query_type : 0); }
+  inline u_int16_t getDNSRetCode()          { return(isDNS() ? protos.dns.last_return_code : 0); }
+  inline char* getHTTPURL()                 { return(isHTTP() ? protos.http.last_url : (char*)"");   }
+  inline void  setHTTPURL(char *v)          { if(isHTTP()) { if(!protos.http.last_url) protos.http.last_url = v; } }
+  void setHTTPMethod(const char* method, ssize_t method_len);
+  void setHTTPMethod(ndpi_http_method m);
+  inline void  setHTTPRetCode(u_int16_t c)  { if(isHTTP()) { protos.http.last_return_code = c; } }
+  inline u_int16_t getHTTPRetCode()   const { return isHTTP() ? protos.http.last_return_code : 0;           };
+  inline const char* getHTTPMethod()  const { return isHTTP() ? ndpi_http_method2str(protos.http.last_method) : (char*)"";        };
+  inline char* getHTTPContentType()   const { return(isHTTP() ? protos.http.last_content_type : (char*)""); };
   bool isTLSProto();
 
   void setExternalAlert(json_object *a);
   void luaRetrieveExternalAlert(lua_State *vm);
   u_int32_t getSrvTcpIssues();
   u_int32_t getCliTcpIssues();
+  double getCliRetrPercentage();
+  double getSrvRetrPercentage();
 
 #if defined(NTOPNG_PRO) && !defined(HAVE_NEDGE)
   inline void updateProfile()     { trafficProfile = iface->getFlowProfile(this); }
@@ -626,7 +643,7 @@ class Flow : public GenericHashEntry {
   inline void setNextAdjacentAS(u_int32_t v) { nextAdjacentAS = v; }
 
   inline ViewInterfaceFlowStats* getViewInterfaceFlowStats() { return(viewFlowStats); }
-  u_int16_t getAlertedStatusScore();
+  u_int16_t getAlertedStatusScore() const;
 
   inline void setFlowNwLatency(const struct timeval * const tv, bool client) {
     if(client) {
@@ -637,23 +654,27 @@ class Flow : public GenericHashEntry {
       if(srv_host) srv_host->updateRoundTripTime(Utils::timeval2ms(&serverNwLatency));
     }
   }
+  inline void setFlowTcpWindow(u_int16_t window_val, bool client) {
+    if(client)
+      cli2srv_window = window_val;
+    else
+      srv2cli_window = window_val;
+  }
   inline void setRtt() {
     rttSec = ((float)(serverNwLatency.tv_sec + clientNwLatency.tv_sec))
       +((float)(serverNwLatency.tv_usec + clientNwLatency.tv_usec)) / (float)1000000;
   }
   inline void setFlowApplLatency(float latency_msecs) { applLatencyMsec = latency_msecs; }
-  inline void setFlowDevice(u_int32_t device_ip, u_int16_t inidx, u_int16_t outidx) {
-    flow_device.device_ip = device_ip;
+  inline void setFlowDevice(u_int32_t device_ip, u_int16_t device_id, u_int16_t inidx, u_int16_t outidx) {
+    flow_device.device_ip = device_ip, flow_device.device_id = device_id;
     flow_device.in_index = inidx, flow_device.out_index = outidx;
   }
   inline u_int32_t getFlowDeviceIp()       { return flow_device.device_ip; };
+  inline u_int32_t getFlowDeviceId()       { return flow_device.device_id; };
   inline u_int16_t getFlowDeviceInIndex()  { return flow_device.in_index;  };
   inline u_int16_t getFlowDeviceOutIndex() { return flow_device.out_index; };
 
-  inline u_int16_t getCliScore() const     { return(cli_score); };
-  inline u_int16_t getSrvScore() const     { return(srv_score); };
-  inline u_int16_t getScore() const        { return(flow_score); };
-  inline void setPeersScoreAccounted()     { peers_score_accounted = true; };
+  inline const u_int16_t getScore()            const { return(flow_score); };
 
 #ifdef HAVE_NEDGE
   inline void setLastConntrackUpdate(u_int32_t when) { last_conntrack_update = when; }
@@ -677,7 +698,6 @@ class Flow : public GenericHashEntry {
   inline bool isIngress2EgressDirection() { return(ingress2egress_direction); }
 #endif
   void housekeep(time_t t);
-  void postFlowSetIdle(const struct timeval *tv);
   void setParsedeBPFInfo(const ParsedeBPF * const ebpf, bool src2dst_direction);
   inline const ContainerInfo* getClientContainerInfo() const {
     return cli_ebpf && cli_ebpf->container_info_set ? &cli_ebpf->container_info : NULL;
@@ -717,9 +737,9 @@ class Flow : public GenericHashEntry {
   inline u_int8_t getCli2SrvDSCP() const { return (cli2srv_tos & 0xFC) >> 2; }
   inline u_int8_t getSrv2CliDSCP() const { return (srv2cli_tos & 0xFC) >> 2; }
 
-  inline u_int8_t getCli2SrvECN() { return (cli2srv_tos & 0x3); }
-  inline u_int8_t getSrv2CliECN() { return (srv2cli_tos & 0x3); }
-  
+  inline u_int8_t getCli2SrvECN()  { return (cli2srv_tos & 0x3); }
+  inline u_int8_t getSrv2CliECN()  { return (srv2cli_tos & 0x3); }
+  inline void setRisk(ndpi_risk r) { ndpi_flow_risk_bitmap = r; }
   inline float getEntropy(bool src2dst_direction) {
     struct ndpi_analyze_struct *e = src2dst_direction ? entropy.c2s : entropy.s2c;
 
@@ -733,6 +753,12 @@ class Flow : public GenericHashEntry {
       custom_flow_info = strdup(what);
     }
   }
+
+  inline bool timeToPeriodicDump(u_int sec) {
+    return((sec - get_first_seen() < CONST_DB_DUMP_FREQUENCY) || (sec - get_partial_last_seen() < CONST_DB_DUMP_FREQUENCY));
+  }
+
+  u_char* getCommunityId(u_char *community_id, u_int community_id_len);
 };
 
 #endif /* _FLOW_H_ */

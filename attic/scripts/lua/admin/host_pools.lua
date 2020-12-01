@@ -561,12 +561,12 @@ print[[
       var select_field = tr.find("td:nth-child(4) select");
       var vlanicon_disabled = null;
 
-      if (is_mac_address(member)) {
+      if (NtopUtils.is_mac_address(member)) {
         vlan_field.attr("disabled", true);
         vlanicon_disabled = false;
         select_field.attr("disabled", false);
       } else {
-        var cidr = is_network_mask(member, true);
+        var cidr = NtopUtils.is_network_mask(member, true);
         select_field.attr("disabled", true);
 
         if (cidr) {
@@ -609,7 +609,7 @@ print[[
       if (! member)
         return true;
 
-      var is_mac = is_mac_address(member);
+      var is_mac = NtopUtils.is_mac_address(member);
       var identifier;
 
       if(is_mac) {
@@ -628,7 +628,7 @@ print[[
           vlan_value = $("input[name='" + name + "']", $("#table-manage-form")).val();
         }
 
-        is_cidr = is_network_mask(address_value, true);
+        is_cidr = NtopUtils.is_network_mask(address_value, true);
         if (! is_cidr)
            /* this will be handled by addressValidator */
           return true;
@@ -640,7 +640,7 @@ print[[
 
       $('input[name^="member_"]:not([name$="_vlan"])', $("#table-manage-form")).each(function() {
         var address_value = $(this).val();
-        var is_cidr = is_network_mask(address_value, true);
+        var is_cidr = NtopUtils.is_network_mask(address_value, true);
 
         var aggregated;
         if (! is_cidr) {
@@ -724,7 +724,7 @@ print [[
       numPoolMembers++;
 
       var tr = $('<tr id=' + newid + '><td>]] printMemberAddressField('member_id') print[[</td><td class="text-center">]] printMemberVlanField('member_id') print[[</td><td>]] printAliasField('member_id') print[[</td><td>]] printIconField('member_id') print[[</td><td class="text-center"></td></tr>');
-      datatableAddDeleteButtonCallback.bind(tr)(5, "datatableUndoAddRow('#" + newid + "', ']] print(i18n("host_pools.empty_pool")) print[[', '#addPoolMemberBtn', 'decPoolMembers')", "]] print(i18n('undo')) print[[");
+      datatableAddDeleteButtonCallback.bind(tr)(5, "datatableUndoAddRow('#" + newid + "', ']] print(i18n("host_pools.empty_pool")) print[[', '#addPoolMemberBtn', 'decPoolMembers')", "]] print("<i class='fas fa-undo-alt'></i>") print[[");
       $("#table-manage table").append(tr);
       $("input", tr).first().focus();
 
@@ -854,7 +854,7 @@ print [[
 
             /* Make member name editable */
             var value = member_address.html();
-            var is_cidr = is_network_mask(value);
+            var is_cidr = NtopUtils.is_network_mask(value);
             if (is_cidr) {
               old_value = member_address.html() + '@' + vlan.html();
               if (((is_cidr.type == "ipv4" && is_cidr.mask == 32)) ||
@@ -904,7 +904,7 @@ end
 print[[
             datatableAddLinkButtonCallback.bind(this)(5, link_value, "]] print(i18n("host_pools.view")) print[[");
             if (!link_value) $("td:nth(5) a:nth(1)", this).css("visibility", "hidden");
-            datatableAddDeleteButtonCallback.bind(this)(5, "delete_member_id ='" + member_id + "'; $('#delete_member_dialog_member').html('" + value +"'); $('#delete_member_dialog').modal('show');", "]] print(i18n('delete')) print[[");
+            datatableAddDeleteButtonCallback.bind(this)(5, "delete_member_id ='" + member_id + "'; $('#delete_member_dialog_member').html('" + value +"'); $('#delete_member_dialog').modal('show');", "]] print("<i class='fas fa-trash'></i>") print[[");
           });
 
           if(numPoolMembers === 0)
@@ -940,7 +940,7 @@ print[[
       $('input[name^="member_"]:not([name$="_vlan"])', form).each(function() {
         var address = null;
 
-        if((member = is_network_mask($(this).val(), true))) {
+        if((member = NtopUtils.is_network_mask($(this).val(), true))) {
           /* this is a network */
           var vlan_name = $(this).attr("name") + "_vlan";
           var vlan_field = $("input[name=" + vlan_name + "]", form);
@@ -1043,7 +1043,7 @@ print [[
         var tr = $('<tr id=' + newid + '><td class="text-center" style="display:none;">' + pool_id + '</td><td>]]
 printPoolNameField('pool_id') print[[</td><td align="center"></td></tr>');
 
-        datatableAddDeleteButtonCallback.bind(tr)(3, "datatableUndoAddRow('#" + newid + "', ']] print(i18n("host_pools.no_pools_defined")) print[[', '#addNewPoolBtn', 'onPoolAddUndo')", "]] print(i18n('undo')) print[[");
+        datatableAddDeleteButtonCallback.bind(tr)(3, "datatableUndoAddRow('#" + newid + "', ']] print(i18n("host_pools.no_pools_defined")) print[[', '#addNewPoolBtn', 'onPoolAddUndo')", "]] print("<i class='fas fa-undo-alt'></i>") print[[");
         $("#table-create table").append(tr);
         $("input", tr).focus();
 
@@ -1125,7 +1125,7 @@ printPoolNameField('pool_id') print[[</td><td align="center"></td></tr>');
             } else {
               datatableAddLinkButtonCallback.bind(this)(4, pool_link, "View");
               value = value.replace("'", "\\'");
-              datatableAddDeleteButtonCallback.bind(this)(4, "delete_pool_id ='" + pool_id + "'; $('#delete_pool_dialog_pool').html('" + value + "'); $('#delete_pool_dialog').modal('show');", "]] print(i18n('delete')) print[[");
+              datatableAddDeleteButtonCallback.bind(this)(4, "delete_pool_id ='" + pool_id + "'; $('#delete_pool_dialog_pool').html('" + value + "'); $('#delete_pool_dialog').modal('show');", "]] print("<i class='fas fa-trash'></i>") print[[");
 
               if (pool_undeletable)
                 $("td:nth-child(4) a", $(this)).last().attr("disabled", "disabled");

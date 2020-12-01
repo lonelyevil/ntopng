@@ -7,7 +7,10 @@ package.path = dirs.installdir .. "/scripts/lua/modules/pools/?.lua;" .. package
 require "lua_utils"
 local json = require "dkjson"
 local rest_utils = require "rest_utils"
-local base_pools = require "base_pools"
+local pools = require "pools"
+local pools_lua_utils = require "pools_lua_utils"
+local tracker = require("tracker")
+local auth = require "auth"
 
 -- ##############################################
 
@@ -22,44 +25,45 @@ function pools_rest_utils.add_pool(pools)
    local confset_id = _POST["confset_id"]
    local recipients = _POST["recipients"]
 
-   sendHTTPHeader('application/json')
-
-   if not isAdministrator() then
-      print(rest_utils.rc(rest_utils.consts_not_granted))
+   if not auth.has_capability(auth.capabilities.pools) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
       return
    end
 
    if not name or not members or not confset_id then
-      print(rest_utils.rc(rest_utils.consts_invalid_args))
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
       return
    end
 
    -- Create an instance out of the `pools` passed as argument
    local s = pools:create()
 
-   members = s:parse_members(members)
+   members_list = s:parse_members(members)
    recipients = s:parse_recipients(recipients)
    -- confset_id as number
    confset_id = tonumber(confset_id)
 
    local new_pool_id = s:add_pool(
       name,
-      members --[[ an array of valid interface ids]],
+      members_list --[[ an array of valid interface ids]],
       confset_id --[[ a valid configset_id --]],
       recipients --[[ an array of valid recipient ids (names)]]
    )
 
    if not new_pool_id then
-      print(rest_utils.rc(rest_utils.consts_add_pool_failed))
+      rest_utils.answer(rest_utils.consts.err.add_pool_failed)
       return
    end
 
-   local rc = rest_utils.consts_ok
+   local rc = rest_utils.consts.success.pool_added
    local res = {
       pool_id = new_pool_id
    }
 
-   print(rest_utils.rc(rc, res))
+   rest_utils.answer(rc, res)
+
+   -- TRACKER HOOK
+   tracker.log('add_pool', { pool_name = name, members = members, pool_key = s.key })
 end
 
 -- ##############################################
@@ -72,22 +76,20 @@ function pools_rest_utils.edit_pool(pools)
    local confset_id = _POST["confset_id"]
    local recipients = _POST["recipients"]
 
-   sendHTTPHeader('application/json')
-
-   if not isAdministrator() then
-      print(rest_utils.rc(rest_utils.consts_not_granted))
+   if not auth.has_capability(auth.capabilities.pools) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
       return
    end
 
    if not pool_id or not name or not members or not confset_id then
-      print(rest_utils.rc(rest_utils.consts_invalid_args))
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
       return
    end
 
    -- Create the instance
    local s = pools:create()
 
-   members = s:parse_members(members)
+   members_list = s:parse_members(members)
    recipients = s:parse_recipients(recipients)
    -- pool_id as number
    pool_id = tonumber(pool_id)
@@ -96,18 +98,21 @@ function pools_rest_utils.edit_pool(pools)
 
    local res = s:edit_pool(pool_id,
       name,
-      members --[[ an array of valid interface ids]], 
+      members_list --[[ an array of valid interface ids]], 
       confset_id --[[ a valid configset_id --]],
       recipients --[[ an array of valid recipient ids (names)]]
    )
 
    if not res then
-      print(rest_utils.rc(rest_utils.consts_edit_pool_failed))
+      rest_utils.answer(rest_utils.consts.err.edit_pool_failed)
       return
    end
 
-   local rc = rest_utils.consts_ok
-   print(rest_utils.rc(rc))
+   local rc = rest_utils.consts.success.pool_edited
+   rest_utils.answer(rc)
+
+   -- TRACKER HOOK
+   tracker.log('edit_pool', { pool_id = pool_id, pool_name = name, members = members, pool_key = s.key })
 end
 
 -- ##############################################
@@ -116,15 +121,13 @@ end
 function pools_rest_utils.delete_pool(pools)
    local pool_id = _POST["pool"]
 
-   sendHTTPHeader('application/json')
-
-   if not isAdministrator() then
-      print(rest_utils.rc(rest_utils.consts_not_granted))
+   if not auth.has_capability(auth.capabilities.pools) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
       return
    end
 
    if not pool_id then
-      print(rest_utils.rc(rest_utils.consts_invalid_args))
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
       return
    end
 
@@ -133,19 +136,30 @@ function pools_rest_utils.delete_pool(pools)
 
    -- Create the instance
    local s = pools:create()
-   local res = s:delete_pool(pool_id)
 
-   if not res then
-      print(rest_utils.rc(rest_utils.consts_pool_not_found))
+   -- Fetch the existing pool
+   local existing_pool = s:get_pool(pool_id)
+   if not existing_pool then
+      rest_utils.answer(rest_utils.consts.err.pool_not_found)
       return
    end
 
-   local rc = rest_utils.consts_ok
+   -- Delete the pool
+   local res = s:delete_pool(pool_id)
+   if not res then
+      rest_utils.answer(rest_utils.consts.err.pool_not_found)
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_deleted
    local res = {
       pool_id = new_pool_id
    }
 
-   print(rest_utils.rc(rc, res))
+   rest_utils.answer(rc, res)
+
+   -- TRACKER HOOK
+   tracker.log('delete_pool', { pool_id = pool_id,  pool_name = existing_pool["name"], pool_key = s.key })
 end
 
 -- ##############################################
@@ -155,15 +169,13 @@ function pools_rest_utils.bind_member(pools)
    local pool_id = _GET["pool"]
    local member = _POST["member"]
 
-   sendHTTPHeader('application/json')
-
    if not isAdministrator() then
-      print(rest_utils.rc(rest_utils.consts_not_granted))
+      rest_utils.answer(rest_utils.consts.err.not_granted)
       return
    end
 
    if not pool_id or not member then
-      print(rest_utils.rc(rest_utils.consts_invalid_args))
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
       return
    end
 
@@ -183,20 +195,25 @@ function pools_rest_utils.bind_member(pools)
    end
 
    if not res then
-      if err == base_pools.ERRORS.ALREADY_BOUND then
+      if err == pools.ERRORS.ALREADY_BOUND then
 	 -- Member already existing, return current pool information in the response
 	 local cur_pool = s:get_pool_by_member(member)
-	 print(rest_utils.rc(rest_utils.consts_bind_pool_member_already_bound, cur_pool))
+	 rest_utils.answer(rest_utils.consts.err.bind_pool_member_already_bound, cur_pool)
       else
 	 -- Generic
-	 print(rest_utils.rc(rest_utils.consts_bind_pool_member_failed))
+	 rest_utils.answer(rest_utils.consts.err.bind_pool_member_failed)
       end
 
       return
    end
 
-   local rc = rest_utils.consts_ok
-   print(rest_utils.rc(rc))
+   local rc = rest_utils.consts.success.pool_member_bound
+   rest_utils.answer(rc)
+
+   local dst_pool = s:get_pool(pool_id)
+
+   -- TRACKER HOOK
+   tracker.log('bind_pool_member', { pool_id = pool_id, pool_name = dst_pool["name"], member = member, pool_key = s.key })
 end
 
 -- ##############################################
@@ -204,8 +221,6 @@ end
 -- @brief Get one or all pools
 function pools_rest_utils.get_pools(pools)
    local pool_id = _GET["pool"]
-
-   sendHTTPHeader('application/json')
 
    -- pool_id as number
    pool_id = tonumber(pool_id)
@@ -222,7 +237,7 @@ function pools_rest_utils.get_pools(pools)
       if cur_pool then
 	 res[pool_id] = cur_pool
       else
-	 print(rest_utils.rc(rest_utils.consts_pool_not_found))
+	 rest_utils.answer(rest_utils.consts.err.pool_not_found)
 	 return
       end
    else
@@ -230,18 +245,76 @@ function pools_rest_utils.get_pools(pools)
       res = s:get_all_pools()
    end
 
-   local rc = rest_utils.consts_ok
-   print(rest_utils.rc(rc, res))
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
 end
 
+-- ##############################################
+
+-- @brief Get all pools of all the available (currently implemented) pool instances matching a given `recipient_id`
+function pools_rest_utils.get_all_instances_pools_by_recipient(recipient_id)
+   local res = {}
+   local all_instances = pools_lua_utils.all_pool_instances_factory()
+
+   for _, instance in pairs(all_instances) do
+      local instance_pools = instance:get_all_pools()
+
+      for _, instance_pool in pairs(instance_pools) do
+	 instance_pool["key"] = instance.key -- e.g., 'interface', 'host', etc.
+	 for _, recipient in pairs(instance_pool["recipients"]) do
+	    if tonumber(recipient.recipient_id) == (recipient_id) then
+	       -- Match, return the recipient
+	       instance_pool["key"] = instance.key -- e.g., 'interface', 'host', etc.
+	       res[#res + 1] = instance_pool
+	       break
+	    end
+	 end
+      end
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
+end
+
+-- ##############################################
+
+-- @brief Get all pools of all the available (currently implemented) pool instances
+function pools_rest_utils.get_all_instances_pools()
+   local res = {}
+   local all_instances = pools_lua_utils.all_pool_instances_factory()
+
+   for _, instance in pairs(all_instances) do
+      local instance_pools = instance:get_all_pools()
+
+      for _, instance_pool in pairs(instance_pools) do
+	 instance_pool["key"] = instance.key -- e.g., 'interface', 'host', etc.
+	 res[#res + 1] = instance_pool
+      end
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
+end
+
+-- ##############################################
+
+-- @brief Get all pools of all the available (currently implemented) pool instances
+function pools_rest_utils.delete_all_instances_pools()
+   local all_instances = pools_lua_utils.all_pool_instances_factory()
+
+   for _, instance in pairs(all_instances) do
+      instance:cleanup()
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc)
+end
 
 -- ##############################################
 
 -- @brief Get one or all pools
 function pools_rest_utils.get_pool_members(pools)
    local pool_id = _GET["pool"]
-
-   sendHTTPHeader('application/json')
 
    -- pool_id as number
    pool_id = tonumber(pool_id)
@@ -254,7 +327,7 @@ function pools_rest_utils.get_pool_members(pools)
    local cur_pool = s:get_pool(pool_id)
 
    if not cur_pool then
-      print(rest_utils.rc(rest_utils.consts_pool_not_found))
+      rest_utils.answer(rest_utils.consts.err.pool_not_found)
       return
    end
 
@@ -263,8 +336,8 @@ function pools_rest_utils.get_pool_members(pools)
       res[#res + 1] = details
    end
 
-   local rc = rest_utils.consts_ok
-   print(rest_utils.rc(rc, res))
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
 end
 
 -- ##############################################
@@ -273,10 +346,8 @@ end
 function pools_rest_utils.get_pool_by_member(pools)
    local member = _POST["member"]
 
-   sendHTTPHeader('application/json')
-
    if not member then
-      print(rest_utils.rc(rest_utils.consts_invalid_args))
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
       return
    end
 
@@ -289,8 +360,8 @@ function pools_rest_utils.get_pool_by_member(pools)
       res = cur_pool
    end
 
-   local rc = rest_utils.consts_ok
-   print(rest_utils.rc(rc, res))
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
 end
 
 -- ##############################################

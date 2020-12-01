@@ -14,23 +14,12 @@ require "lua_utils"
 local lists_utils = require "lists_utils"
 local recording_utils = require "recording_utils"
 local plugins_utils = require "plugins_utils"
+local prefs_reload_utils = require "prefs_reload_utils"
 local now = os.time()
 
-if(areAlertsEnabled()) then
-   local alert_utils = require "alert_utils"
-   local alerts_api = require "alerts_api"
-   local periodicity = 3
-  
-   -- Check for alerts from the datapath
-   alert_utils.checkStoreAlertsFromC()
+-- Check and possibly reload changed preferences
+prefs_reload_utils.check_reload_prefs()
 
-   -- Check for alerts to be stored to SQLite
-   alerts_api.checkPendingStoreAlerts()
-
-   -- Check for alerts to be notified
-   alert_utils.processAlertNotifications(now, periodicity)
-end
-   
 -- Check and possibly reload plugins
 plugins_utils.checkReloadPlugins(now)
 

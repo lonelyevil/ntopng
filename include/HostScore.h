@@ -24,20 +24,23 @@
 
 class HostScore {
  private:
-  u_int32_t old_score, new_score;
-
-  /* Necessary to handle short idle flows */
-  u_int32_t old_idle_flow_score, new_idle_flow_score;
-
+  Mutex m;
+  u_int16_t cli_score[MAX_NUM_SCORE_CATEGORIES], srv_score[MAX_NUM_SCORE_CATEGORIES];
+  
+  u_int32_t sum(const bool as_client) const;
+  void lua_breakdown(lua_State *vm, bool as_client);
+  
  public:
   HostScore();
-  inline void incValue(u_int16_t score)    { new_score += score; };
-  inline u_int16_t getValue() const        { return(old_score); };
-  void refreshValue();
 
-  /* This call is not performed into the same thread as the incScore, so
-   * it needs a separate counter to avoid contention. */
-  inline void incIdleFlowScore(u_int16_t score) { new_idle_flow_score += score; };
+  inline u_int32_t get()       const { return(getClient() + getServer());  };
+  inline u_int32_t getClient() const { return(sum(true  /* as client */)); };
+  inline u_int32_t getServer() const { return(sum(false /* as server */)); };
+  
+  u_int16_t incValue(u_int16_t score, ScoreCategory score_category, bool as_client);
+  u_int16_t decValue(u_int16_t score, ScoreCategory score_category, bool as_client);
+
+  void lua_breakdown(lua_State *vm);
 };
 
 #endif

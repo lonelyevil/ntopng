@@ -101,6 +101,7 @@ function prefsGetActiveSubpage(show_advanced_prefs, tab)
 end
 
 function printMenuSubpages(tab)
+
   for _, subpage in ipairs(menu_subpages) do
     if not subpage.hidden then
       local url = ternary(subpage.disabled, "#", ntop.getHttpPrefix() .. [[/lua/admin/prefs.lua?tab=]] .. (subpage.id))
@@ -119,8 +120,8 @@ end
 
 -- ############################################
 
--- notify ntopng upon preference changes
-function notifyNtopng(key)
+--- Notify ntopng upon preference changes
+function notifyNtopng(key, value)
     if key == nil then return end
     -- notify runtime ntopng configuration changes
     if string.starts(key, 'toggle_logging_level') then

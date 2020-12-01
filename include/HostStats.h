@@ -29,9 +29,10 @@ class HostStats: public GenericTrafficElement {
   NetworkInterface *iface;
   Host *host;
 
-  std::map<AlertType,u_int32_t> total_alerts;
+  u_int32_t total_alerts;
   u_int32_t unreachable_flows_as_client, unreachable_flows_as_server;
-  u_int32_t misbehaving_flows_as_client, misbehaving_flows_as_server;
+  /* Used concurrently in view interfaces, possibly removed after https://github.com/ntop/ntopng/issues/4596 */
+  u_int32_t alerted_flows_as_client, alerted_flows_as_server;
   u_int32_t host_unreachable_flows_as_client, host_unreachable_flows_as_server;
   u_int32_t total_num_flows_as_client, total_num_flows_as_server;
   u_int32_t num_flow_alerts;
@@ -78,14 +79,14 @@ class HostStats: public GenericTrafficElement {
   virtual void computeAnomalyIndex(time_t when) {};
 
   inline Host* getHost() const { return(host); }
-  inline void incNumMisbehavingFlows(bool as_client)   { if(as_client) misbehaving_flows_as_client++; else misbehaving_flows_as_server++; };
+  inline void incNumAlertedFlows(bool as_client)   { if(as_client) alerted_flows_as_client++; else alerted_flows_as_server++; };
   inline void incNumUnreachableFlows(bool as_server) { if(as_server) unreachable_flows_as_server++; else unreachable_flows_as_client++; }
   inline void incNumHostUnreachableFlows(bool as_server) { if(as_server) host_unreachable_flows_as_server++; else host_unreachable_flows_as_client++; };
-  inline void incNumFlowAlerts()                     { num_flow_alerts++; }
-  inline void incTotalAlerts(AlertType alert_type)   { total_alerts[alert_type]++; };
+  inline void incNumFlowAlerts()                     { num_flow_alerts++; };
+  inline void incTotalAlerts(AlertType alert_type)   { total_alerts++;    };
 
-  inline u_int32_t getTotalMisbehavingNumFlowsAsClient() const { return(misbehaving_flows_as_client);  };
-  inline u_int32_t getTotalMisbehavingNumFlowsAsServer() const { return(misbehaving_flows_as_server);  };
+  inline u_int32_t getTotalAlertedNumFlowsAsClient() const { return(alerted_flows_as_client);  };
+  inline u_int32_t getTotalAlertedNumFlowsAsServer() const { return(alerted_flows_as_server);  };
   inline u_int32_t getTotalUnreachableNumFlowsAsClient() const { return(unreachable_flows_as_client);  };
   inline u_int32_t getTotalUnreachableNumFlowsAsServer() const { return(unreachable_flows_as_server);  };
   inline u_int32_t getTotalHostUnreachableNumFlowsAsClient() const { return(host_unreachable_flows_as_client);  };
@@ -103,8 +104,7 @@ class HostStats: public GenericTrafficElement {
   inline u_int32_t getTotalNumFlowsAsServer() const { return(total_num_flows_as_server);  };
   inline u_int32_t getTotalActivityTime()     const { return(total_activity_time);        };
   virtual void deserialize(json_object *obj)        {}
-  virtual void incNumFlows(bool as_client, Host *peer) { if(as_client) total_num_flows_as_client++; else total_num_flows_as_server++; } ;
-  virtual void decNumFlows(bool as_client, Host *peer) {};
+  virtual void incNumFlows(bool as_client) { if(as_client) total_num_flows_as_client++; else total_num_flows_as_server++; } ;
   virtual bool hasAnomalies(time_t when) { return false; };
   virtual void luaAnomalies(lua_State* vm, time_t when) {};
   virtual void lua(lua_State* vm, bool mask_host, DetailsLevel details_level);
@@ -129,13 +129,13 @@ class HostStats: public GenericTrafficElement {
   inline HostPoolStats* getQuotaEnforcementStats() { return(quota_enforcement_stats); }
 #endif
 
-  virtual void luaHTTP(lua_State *vm) const {}
-  virtual void luaDNS(lua_State *vm, bool verbose) const  {}
-  virtual void luaICMP(lua_State *vm, bool isV4, bool verbose) const  {}
+  virtual void luaHTTP(lua_State *vm) {}
+  virtual void luaDNS(lua_State *vm, bool verbose)  {}
+  virtual void luaICMP(lua_State *vm, bool isV4, bool verbose)  {}
   virtual void incrVisitedWebSite(char *hostname) {}
-  virtual HTTPstats* getHTTPstats()  const { return(NULL); }
-  virtual DnsStats*  getDNSstats()   const { return(NULL); }
-  virtual ICMPstats* getICMPstats()  const { return(NULL); }
+  virtual HTTPstats* getHTTPstats()  { return(NULL); }
+  virtual DnsStats*  getDNSstats()   { return(NULL); }
+  virtual ICMPstats* getICMPstats()  { return(NULL); }
 
   virtual void incCliContactedPorts(u_int16_t port)  { ; }
   virtual void incSrvPortsContacts(u_int16_t port)   { ; }

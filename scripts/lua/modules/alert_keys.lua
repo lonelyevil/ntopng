@@ -72,7 +72,22 @@ local alert_keys = {
       alert_suspicious_file_transfer       = {NO_PEN, 57},
       alert_known_proto_on_non_std_port    = {NO_PEN, 58},
       alert_host_log                       = {NO_PEN, 59},
-      
+      alert_attack_mitigation_via_snmp     = {NO_PEN, 60},
+      alert_iec104_error                   = {NO_PEN, 61},
+      alert_flow_risk                      = {NO_PEN, 62},
+      alert_unexpected_dns_server          = {NO_PEN, 63},
+      alert_unexpected_smtp_server         = {NO_PEN, 64},
+      alert_unexpected_dhcp_server         = {NO_PEN, 65},
+      alert_unexpected_ntp_server          = {NO_PEN, 66},
+      alert_too_many_retransmissions       = {NO_PEN, 67}, -- No longer used
+      alert_lateral_movement               = {NO_PEN, 68},
+      alert_list_download_succeeded        = {NO_PEN, 69},
+      alert_no_if_activity                 = {NO_PEN, 70}, -- scripts/plugins/alerts/internals/no_if_activity
+      alert_zero_tcp_window                = {NO_PEN, 71},
+      alert_flow_low_goodput               = {NO_PEN, 72},
+      alert_unexpected_new_device          = {NO_PEN, 73}, -- scripts/plugins/alerts/security/unexpected_new_device
+      alert_shell_script_executed          = {NO_PEN, 74}, -- scripts/plugins/endpoints/shell_alert_endpoint
+      alert_periodicity_update             = {NO_PEN, 75}, -- pro/scripts/enterprise_l_plugins/alerts/network/periodicity_update
       -- Add here additional keys for alerts generated
       -- by ntopng plugins
       -- WARNING: make sure integers do NOT OVERLAP with

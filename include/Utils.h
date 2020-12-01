@@ -79,21 +79,23 @@ public:
   static char* urlDecode(const char *src, char *dst, u_int dst_len);
   static bool purifyHTTPparam(char * const param, bool strict, bool allowURL, bool allowDots);
   static char* stripHTML(const char * const str);
+  static bool sendTCPData(char *host, int port, char *data, int timeout);
   static bool postHTTPJsonData(char *username, char *password, char *url,
 			       char *json, int timeout, HTTPTranferStats *stats);
   static bool postHTTPJsonData(char *username, char *password, char *url,
 			       char *json, int timeout,
 			       HTTPTranferStats *stats, char *return_data,
 			       int return_data_size, int *response_code);
-  static bool sendMail(char *from, char *to, char *message, char *smtp_server, char *username, char *password);
+  static bool sendMail(lua_State* vm, char *from, char *to, char *cc, char *message, char *smtp_server, char *username, char *password);
   static bool postHTTPTextFile(lua_State* vm, char *username, char *password,
 			       char *url, char *path, int timeout, HTTPTranferStats *stats);
-  static bool httpGetPost(lua_State* vm, char *url, char *username,
-		      char *password, int timeout, bool return_content,
-		      bool use_cookie_authentication, HTTPTranferStats *stats, const char *form_data,
-          char *write_fname, bool follow_redirects, int ip_version);
+  static bool httpGetPost(lua_State* vm, char *url,
+			  char *username, char *password, char *user_header_token,
+			  int timeout, bool return_content,
+			  bool use_cookie_authentication, HTTPTranferStats *stats, const char *form_data,
+			  char *write_fname, bool follow_redirects, int ip_version);
   static long httpGet(const char * const url,
-		      const char * const username, const char * const password,
+		      const char * const username, const char * const password, const char * const user_header_token,
 		      int timeout,
 		      char * const resp, const u_int resp_len);
   static bool progressCanContinue(ProgressState *progressState);
@@ -103,6 +105,7 @@ public:
   static char* getURL(char *url, char *buf, u_int buf_len);
   static bool discardOldFilesExceeding(const char *path, const unsigned long max_size);
   static u_int64_t macaddr_int(const u_int8_t *mac);
+  static char *ifname2devname(const char *ifname, char *devname, int devname_size);
   static void readMac(char *ifname, dump_mac_t mac_addr);
   static u_int32_t readIPv4(char *ifname);
   static u_int32_t getMaxIfSpeed(const char *ifname);
@@ -178,6 +181,7 @@ public:
   static void listInterfaces(lua_State* vm); 
   static bool validInterface(const ntop_if_t *ntop_if);
   static void containerInfoLua(lua_State *vm, const ContainerInfo * const cont);
+  static char *ntop_lookupdev(char *ifname_out, int ifname_size);
   /**
    * @brief Return all the available interfaces
    * @details Return all the available interfaces, unifying data from PF_RING and pcap, and excluding invalid interfaces
@@ -229,6 +233,12 @@ public:
   static int snappend(char *str, size_t size, const char *tobeappended, const char *separator);
   static bool isNumber(const char *s, unsigned int s_len, bool *is_float);
   static bool isPingSupported();
+  static ScoreCategory mapScriptToScoreCategory(ScriptCategory script_category);
+  /*
+    Maps an AlertLevel into the corresponding AlertLevelGroup. Alert level groups
+    are used to 'compress' alert levels into a reduced number of (grouped) levels.
+   */
+  static AlertLevelGroup mapAlertLevelToGroup(AlertLevel alert_level);
 };
 
 #endif /* _UTILS_H_ */

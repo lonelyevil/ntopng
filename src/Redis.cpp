@@ -44,11 +44,11 @@ Redis::Redis(const char *_redis_host, const char *_redis_password, u_int16_t _re
 
   redis = NULL, operational = false;
   initializationCompleted = false;
-  localToResolve = new FifoStringsQueue(MAX_NUM_QUEUED_ADDRS);
-  remoteToResolve = new FifoStringsQueue(MAX_NUM_QUEUED_ADDRS);
+  localToResolve = new (std::nothrow) FifoStringsQueue(MAX_NUM_QUEUED_ADDRS);
+  remoteToResolve = new (std::nothrow) FifoStringsQueue(MAX_NUM_QUEUED_ADDRS);
   reconnectRedis(giveup_on_failure);
   numCached = 0;
-  l = new Mutex();
+  l = new (std::nothrow) Mutex();
 
   if(operational) getRedisVersion();
 }
@@ -228,9 +228,8 @@ void Redis::checkDumpable(const char * const key) {
      This ensures settings persistance also upon redis flushes */
   if(!strncmp(key, "ntopng.prefs.", 13)
      || !strncmp(key, "ntopng.user.", 12)) {
-    ntop->getPrefs()->reloadPrefsFromRedis();
-    /* Tell housekeeping.lua to dump prefs to disk */
-    ntop->getRedis()->set((char*)PREFS_CHANGED, (char*)"true");
+    /* Tell housekeeping.lua to refresh in-memory prefs (and possibly dump them to runtimeprefs.json) */
+    ntop->getRedis()->set((char*)PREFS_CHANGED, "1");
     // ntop->getTrace()->traceEvent(TRACE_NORMAL, "Going to refresh after change of: %s", key);
   }
 }

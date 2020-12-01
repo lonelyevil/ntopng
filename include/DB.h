@@ -29,7 +29,9 @@ class DB {
   struct timeval lastUpdateTime;
   float exportRate;
   u_int64_t exportedFlows, lastExportedFlows;
-  u_int32_t droppedFlows, queueDroppedFlows;
+  /* Multiple threads can inc in case of view interfaces */
+  std::atomic<u_int32_t> droppedFlows;
+  std::atomic<u_int32_t> queueDroppedFlows;
   u_int64_t checkpointExportedFlows;
   u_int32_t checkpointDroppedFlows, checkpointQueueDroppedFlows;
 
@@ -45,6 +47,7 @@ class DB {
   inline void incNumDroppedFlows(u_int32_t num = 1)         { droppedFlows += num;      };
   inline void incNumQueueDroppedFlows(u_int32_t num = 1)    { queueDroppedFlows += num; };
 
+  inline u_int64_t getNumExportedFlows() const              { return(exportedFlows); }
   inline u_int32_t getNumDroppedFlows()  const              { return(queueDroppedFlows + droppedFlows); };
   void updateStats(const struct timeval *tv);
   void checkPointCounters(bool drops_only);

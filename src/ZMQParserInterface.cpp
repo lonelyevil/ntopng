@@ -23,19 +23,25 @@
 
 #ifndef HAVE_NEDGE
 
+// #define DEBUG_FLOW_DRIFT
+
 /* **************************************************** */
 
 /* IMPORTANT: keep it in sync with flow_fields_description part of flow_utils.lua */
-ZMQParserInterface::ZMQParserInterface(const char *endpoint, const char *custom_interface_type) : ParserInterface(endpoint, custom_interface_type) {
+ZMQParserInterface::ZMQParserInterface(const char *endpoint, const char *custom_interface_type) :
+  ParserInterface(endpoint, custom_interface_type) {
   zmq_initial_bytes = 0, zmq_initial_pkts = 0;
   zmq_remote_stats = zmq_remote_stats_shadow = NULL;
   memset(&last_zmq_remote_stats_update, 0, sizeof(last_zmq_remote_stats_update));
   zmq_remote_initial_exported_flows = 0;
+  remote_lifetime_timeout = remote_idle_timeout = 0;
   once = false;
   flow_max_idle = ntop->getPrefs()->get_pkt_ifaces_flow_max_idle();
 #ifdef NTOPNG_PRO
   custom_app_maps = NULL;
 #endif
+  memset(&recvStats, 0, sizeof(recvStats));
+  memset(&recvStatsCheckpoint, 0, sizeof(recvStatsCheckpoint));
 
   /* Populate defaults for @NTOPNG@ nProbe templates. No need to populate
      all the fields as nProbe will sent them periodically.
@@ -83,6 +89,7 @@ ZMQParserInterface::ZMQParserInterface(const char *endpoint, const char *custom_
   addMapping("POST_NAT_DST_IPV4_ADDR", POST_NAT_DST_IPV4_ADDR);
   addMapping("POST_NAPT_SRC_TRANSPORT_PORT", POST_NAPT_SRC_TRANSPORT_PORT);
   addMapping("POST_NAPT_DST_TRANSPORT_PORT", POST_NAPT_DST_TRANSPORT_PORT);
+  addMapping("OBSERVATION_POINT_ID", OBSERVATION_POINT_ID);
   addMapping("INGRESS_VRFID", INGRESS_VRFID);
   addMapping("IPV4_SRC_MASK", IPV4_SRC_MASK);
   addMapping("IPV4_DST_MASK", IPV4_DST_MASK);
@@ -103,7 +110,7 @@ ZMQParserInterface::ZMQParserInterface(const char *endpoint, const char *custom_
   addMapping("HTTP_RET_CODE", HTTP_RET_CODE, NTOP_PEN);
   addMapping("HTTP_METHOD", HTTP_METHOD, NTOP_PEN);
   addMapping("SSL_SERVER_NAME", SSL_SERVER_NAME, NTOP_PEN);
-  addMapping("SSL_CIPHER", SSL__CIPHER, NTOP_PEN);
+  addMapping("TLS_CIPHER", TLS_CIPHER, NTOP_PEN);
   addMapping("SSL_UNSAFE_CIPHER", SSL_UNSAFE_CIPHER, NTOP_PEN);
   addMapping("JA3C_HASH", JA3C_HASH, NTOP_PEN);
   addMapping("JA3S_HASH", JA3S_HASH, NTOP_PEN);
@@ -112,6 +119,7 @@ ZMQParserInterface::ZMQParserInterface(const char *endpoint, const char *custom_
   addMapping("DST_FRAGMENTS", DST_FRAGMENTS, NTOP_PEN);
   addMapping("CLIENT_NW_LATENCY_MS", CLIENT_NW_LATENCY_MS, NTOP_PEN);
   addMapping("SERVER_NW_LATENCY_MS", SERVER_NW_LATENCY_MS, NTOP_PEN);
+  addMapping("L7_PROTO_RISK", L7_PROTO_RISK, NTOP_PEN);
 }
 
 /* **************************************************** */
@@ -155,7 +163,7 @@ bool ZMQParserInterface::getKeyId(char *sym, u_int32_t sym_len, u_int32_t * cons
   is_num = Utils::isNumber(sym, sym_len, &is_dotted);
 
   if(is_num && is_dotted) {
-    if(sscanf(sym, "%u.%u", &cur_pen, &cur_field) != 2) 
+    if(sscanf(sym, "%u.%u", &cur_pen, &cur_field) != 2)
       return false;
     *pen = cur_pen, *field = cur_field;
   } else if(is_num) {
@@ -177,12 +185,13 @@ u_int8_t ZMQParserInterface::parseEvent(const char * const payload, int payload_
   json_object *o;
   enum json_tokener_error jerr = json_tokener_success;
   ZMQ_RemoteStats zrs;
+  const u_int32_t max_timeout = 600;
 
   memset(&zrs, 0, sizeof(zrs));
 
   // payload[payload_size] = '\0';
 
-  // ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s", payload);
+  //  ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s", payload);
   o = json_tokener_parse_verbose(payload, &jerr);
 
   if(o) {
@@ -223,10 +232,20 @@ u_int8_t ZMQParserInterface::parseEvent(const char * const payload, int payload_
     }
 
     if(json_object_object_get_ex(o, "timeout", &w)) {
-      if(json_object_object_get_ex(w, "lifetime", &z))
+      if(json_object_object_get_ex(w, "lifetime", &z)) {
 	zrs.remote_lifetime_timeout = (u_int32_t)json_object_get_int64(z);
-      if(json_object_object_get_ex(w, "idle", &z))
+
+	if(zrs.remote_lifetime_timeout > max_timeout)
+	  zrs.remote_lifetime_timeout = max_timeout;
+      }
+
+      if(json_object_object_get_ex(w, "idle", &z)) {
 	zrs.remote_idle_timeout = (u_int32_t)json_object_get_int64(z);
+
+	if(zrs.remote_idle_timeout > max_timeout)
+	  zrs.remote_idle_timeout = max_timeout;
+      }
+
       if(json_object_object_get_ex(w, "collected_lifetime", &z))
 	zrs.remote_collected_lifetime_timeout = (u_int32_t)json_object_get_int64(z);
     }
@@ -277,19 +296,17 @@ u_int8_t ZMQParserInterface::parseEvent(const char * const payload, int payload_
 				 zrs.num_exporters, zrs.num_flow_exports);
 #endif
 
+    remote_lifetime_timeout = zrs.remote_lifetime_timeout, remote_idle_timeout = zrs.remote_idle_timeout;
+    
     /* ntop->getTrace()->traceEvent(TRACE_WARNING, "%u/%u", avg_bps, avg_pps); */
 
     /* Process Flow */
     setRemoteStats(&zrs);
 
-    if(flowHashing) {
-      FlowHashing *current, *tmp;
-      ZMQParserInterface *current_iface;
+    for(std::map<u_int64_t, NetworkInterface*>::iterator it = flowHashing.begin(); it != flowHashing.end(); ++it) {
+      ZMQParserInterface *z = (ZMQParserInterface*)it->second;
 
-      HASH_ITER(hh, flowHashing, current, tmp) {
-	if((current_iface = dynamic_cast<ZMQParserInterface*>(current->iface)))
-	  current_iface->setRemoteStats(&zrs);
-      }
+      z->setRemoteStats(&zrs);
     }
 
     /* Dispose memory */
@@ -445,13 +462,13 @@ bool ZMQParserInterface::parsePENZeroField(ParsedFlow * const flow, u_int32_t fi
     flow->pkt_sampling_rate = value->int_num;
     break;
   case DIRECTION:
-    if(value->string != NULL) 
+    if(value->string != NULL)
       flow->direction = atoi(value->string);
-    else     
+    else
       flow->direction = value->int_num;
     break;
   case EXPORTER_IPV4_ADDRESS:
-    if (value->string != NULL) {
+    if(value->string != NULL) {
       /* Format: a.b.c.d, possibly overrides NPROBE_IPV4_ADDRESS */
       u_int32_t ip = ntohl(inet_addr(value->string));
       if(ip) {
@@ -469,6 +486,9 @@ bool ZMQParserInterface::parsePENZeroField(ParsedFlow * const flow, u_int32_t fi
     break;
   case OUTPUT_SNMP:
     flow->outIndex = value->int_num;
+    break;
+  case OBSERVATION_POINT_ID:
+    flow->deviceId = value->int_num;
     break;
   case POST_NAT_SRC_IPV4_ADDR:
     if(ntop->getPrefs()->do_override_src_with_post_nat_src()) {
@@ -539,9 +559,9 @@ bool ZMQParserInterface::parsePENZeroField(ParsedFlow * const flow, u_int32_t fi
 /* **************************************************** */
 
 bool ZMQParserInterface::parsePENNtopField(ParsedFlow * const flow, u_int32_t field, ParsedValue *value) const {
- 
+
   /* Check for backward compatibility to handle cases like field = 123 (CLIENT_NW_LATENCY_MS)
-   * instead of field = 57595 (NTOP_BASE_ID + 123) */ 
+   * instead of field = 57595 (NTOP_BASE_ID + 123) */
   if(field < NTOP_BASE_ID)
     field += NTOP_BASE_ID;
 
@@ -585,7 +605,7 @@ bool ZMQParserInterface::parsePENNtopField(ParsedFlow * const flow, u_int32_t fi
   case CLIENT_NW_LATENCY_MS:
     {
       float client_nw_latency;
-      client_nw_latency = value->double_num; 
+      client_nw_latency = value->double_num;
       flow->tcp.clientNwLatency.tv_sec = client_nw_latency / 1e3;
       flow->tcp.clientNwLatency.tv_usec = 1e3 * (client_nw_latency - flow->tcp.clientNwLatency.tv_sec * 1e3);
       break;
@@ -607,8 +627,14 @@ bool ZMQParserInterface::parsePENNtopField(ParsedFlow * const flow, u_int32_t fi
   case APPL_LATENCY_MS:
     flow->tcp.applLatencyMsec = value->double_num;
     break;
+  case TCP_WIN_MAX_IN:
+    flow->tcp.in_window = value->int_num;
+    break;
+  case TCP_WIN_MAX_OUT:
+    flow->tcp.out_window = value->int_num;
+    break;
   case DNS_QUERY:
-    if (value->string[0] && value->string[0] != '\n') {
+    if(value->string[0] && value->string[0] != '\n') {
       if(flow->dns_query) free(flow->dns_query);
       flow->dns_query = strdup(value->string);
     }
@@ -626,13 +652,13 @@ bool ZMQParserInterface::parsePENNtopField(ParsedFlow * const flow, u_int32_t fi
       flow->dns_ret_code = value->int_num;
     break;
   case HTTP_URL:
-    if (value->string[0] && value->string[0] != '\n') {
+    if(value->string[0] && value->string[0] != '\n') {
       if(flow->http_url) free(flow->http_url);
       flow->http_url = strdup(value->string);
     }
     break;
   case HTTP_SITE:
-    if (value->string[0] && value->string[0] != '\n') {
+    if(value->string[0] && value->string[0] != '\n') {
       if(flow->http_site) free(flow->http_site);
       flow->http_site = strdup(value->string);
     }
@@ -644,37 +670,38 @@ bool ZMQParserInterface::parsePENNtopField(ParsedFlow * const flow, u_int32_t fi
       flow->http_ret_code = value->int_num;
     break;
   case HTTP_METHOD:
-    if (value->string[0] && value->string[0] != '\n') {
-      if(flow->http_method) free(flow->http_method);
-      flow->http_method = strdup(value->string);
-    }
+    if(value->string[0] && value->string[0] != '\n')
+      flow->http_method = ndpi_http_str2method(value->string, strlen(value->string));
     break;
   case SSL_SERVER_NAME:
-    if (value->string[0] && value->string[0] != '\n') {
+    if(value->string[0] && value->string[0] != '\n') {
       if(flow->tls_server_name) free(flow->tls_server_name);
       flow->tls_server_name = strdup(value->string);
     }
     break;
   case JA3C_HASH:
-    if (value->string[0]) {
+    if(value->string[0]) {
       if(flow->ja3c_hash) free(flow->ja3c_hash);
       flow->ja3c_hash = strdup(value->string);
     }
     break;
   case JA3S_HASH:
-    if (value->string[0]) {
+    if(value->string[0]) {
       if(flow->ja3s_hash) free(flow->ja3s_hash);
       flow->ja3s_hash = strdup(value->string);
     }
     break;
-  case SSL__CIPHER:
+  case TLS_CIPHER:
     flow->tls_cipher = value->int_num;
     break;
   case SSL_UNSAFE_CIPHER:
     flow->tls_unsafe_cipher = value->int_num;
     break;
+  case L7_PROTO_RISK:
+    flow->ndpi_flow_risk_bitmap = value->int_num;
+    break;
   case BITTORRENT_HASH:
-    if (value->string[0] && value->string[0] != '\n') {
+    if(value->string[0] && value->string[0] != '\n') {
       if(flow->bittorrent_hash) free(flow->bittorrent_hash);
       flow->bittorrent_hash = strdup(value->string);
     }
@@ -720,24 +747,24 @@ bool ZMQParserInterface::matchPENZeroField(ParsedFlow * const flow, u_int32_t fi
   }
 
   case SRC_TOS:
-    if (value->string) return (flow->src_tos == atoi(value->string));
+    if(value->string) return (flow->src_tos == atoi(value->string));
     else return (flow->src_tos == value->int_num);
 
   case DST_TOS:
-    if (value->string) return (flow->dst_tos == atoi(value->string));
+    if(value->string) return (flow->dst_tos == atoi(value->string));
     else return (flow->dst_tos == value->int_num);
 
   case IPV4_SRC_ADDR:
   case IPV6_SRC_ADDR:
   {
     IpAddress ip;
-    if (value->string) ip.set((char *) value->string);
+    if(value->string) ip.set((char *) value->string);
     else ip.set(ntohl(value->int_num));
     return (flow->src_ip.compare(&ip) == 0);
   }
 
   case IP_PROTOCOL_VERSION:
-    if (value->string)
+    if(value->string)
       return (flow->version == atoi(value->string));
     else
       return (flow->version == value->int_num);
@@ -746,32 +773,32 @@ bool ZMQParserInterface::matchPENZeroField(ParsedFlow * const flow, u_int32_t fi
   case IPV6_DST_ADDR:
   {
     IpAddress ip;
-    if (value->string) ip.set((char *) value->string);
+    if(value->string) ip.set((char *) value->string);
     else ip.set(ntohl(value->int_num));
     return (flow->dst_ip.compare(&ip) == 0);
   }
 
   case L4_SRC_PORT:
-    if (value->string) return (flow->src_port == htons((u_int32_t) atoi(value->string)));
+    if(value->string) return (flow->src_port == htons((u_int32_t) atoi(value->string)));
     else return (flow->src_port == htons((u_int32_t) value->int_num));
 
   case L4_DST_PORT:
-    if (value->string) return (flow->dst_port == htons((u_int32_t) atoi(value->string)));
+    if(value->string) return (flow->dst_port == htons((u_int32_t) atoi(value->string)));
     else return (flow->dst_port == htons((u_int32_t) value->int_num));
 
   case SRC_VLAN:
   case DST_VLAN:
   case DOT1Q_SRC_VLAN:
   case DOT1Q_DST_VLAN:
-    if (value->string) return (flow->vlan_id == atoi(value->string));
+    if(value->string) return (flow->vlan_id == atoi(value->string));
     else return (flow->vlan_id == value->int_num);
 
   case PROTOCOL:
-    if (value->string) return (flow->l4_proto == atoi(value->string));
+    if(value->string) return (flow->l4_proto == atoi(value->string));
     else return (flow->l4_proto == value->int_num);
 
   case DIRECTION:
-    if (value->string) return (flow->direction == atoi(value->string));
+    if(value->string) return (flow->direction == atoi(value->string));
     else return (flow->direction == value->int_num);
 
   case EXPORTER_IPV4_ADDRESS:
@@ -780,37 +807,43 @@ bool ZMQParserInterface::matchPENZeroField(ParsedFlow * const flow, u_int32_t fi
   case EXPORTER_IPV6_ADDRESS:
     if(value->string != NULL && strlen(value->string) > 0) {
       struct ndpi_in6_addr ipv6;
-      if (inet_pton(AF_INET6, value->string, &ipv6) <= 0)
-        return false;
+
+      if(inet_pton(AF_INET6, value->string, &ipv6) <= 0)
+
+	return false;
       return (memcmp(&flow->device_ipv6, &ipv6, sizeof(flow->device_ipv6)) == 0);
     }
 
   case INPUT_SNMP:
-    if (value->string) return (flow->inIndex == atoi(value->string));
+    if(value->string) return (flow->inIndex == atoi(value->string));
     else return (flow->inIndex == value->int_num);
 
   case OUTPUT_SNMP:
-    if (value->string) return (flow->outIndex == atoi(value->string));
+    if(value->string) return (flow->outIndex == atoi(value->string));
     else return (flow->outIndex == value->int_num);
 
+  case OBSERVATION_POINT_ID:
+    if(value->string) return (flow->deviceId == atoi(value->string));
+    else return (flow->deviceId == value->int_num);
+
   case INGRESS_VRFID:
-    if (value->string) return (flow->vrfId == (u_int) atoi(value->string));
+    if(value->string) return (flow->vrfId == (u_int) atoi(value->string));
     else return (flow->vrfId == value->int_num);
 
   case SRC_AS:
-    if (value->string) return (flow->src_as == (u_int32_t) atoi(value->string));
+    if(value->string) return (flow->src_as == (u_int32_t) atoi(value->string));
     else return (flow->src_as == value->int_num);
 
   case DST_AS:
-    if (value->string) return (flow->dst_as == (u_int32_t) atoi(value->string));
+    if(value->string) return (flow->dst_as == (u_int32_t) atoi(value->string));
     else return (flow->dst_as == value->int_num);
 
   case BGP_NEXT_ADJACENT_ASN:
-    if (value->string) return (flow->next_adjacent_as == (u_int32_t) atoi(value->string));
+    if(value->string) return (flow->next_adjacent_as == (u_int32_t) atoi(value->string));
     else return (flow->next_adjacent_as == value->int_num);
 
   case BGP_PREV_ADJACENT_ASN:
-    if (value->string) return (flow->prev_adjacent_as == (u_int32_t) atoi(value->string));
+    if(value->string) return (flow->prev_adjacent_as == (u_int32_t) atoi(value->string));
     else return (flow->prev_adjacent_as == value->int_num);
 
   default:
@@ -824,9 +857,9 @@ bool ZMQParserInterface::matchPENZeroField(ParsedFlow * const flow, u_int32_t fi
 /* **************************************************** */
 
 bool ZMQParserInterface::matchPENNtopField(ParsedFlow * const flow, u_int32_t field, ParsedValue *value) const {
- 
+
   /* Check for backward compatibility to handle cases like field = 123 (CLIENT_NW_LATENCY_MS)
-   * instead of field = 57595 (NTOP_BASE_ID + 123) */ 
+   * instead of field = 57595 (NTOP_BASE_ID + 123) */
   if(field < NTOP_BASE_ID)
     field += NTOP_BASE_ID;
 
@@ -834,8 +867,8 @@ bool ZMQParserInterface::matchPENNtopField(ParsedFlow * const flow, u_int32_t fi
   case L7_PROTO:
   {
     ndpi_proto l7_proto = { 0 };
-    if (value->string) {
-      if (!strchr(value->string, '.')) {
+    if(value->string) {
+      if(!strchr(value->string, '.')) {
         /* Old behaviour, only the app protocol */
         l7_proto.app_protocol = atoi(value->string);
       } else {
@@ -850,7 +883,7 @@ bool ZMQParserInterface::matchPENNtopField(ParsedFlow * const flow, u_int32_t fi
   }
 
   case L7_PROTO_NAME:
-    if (value->string) {
+    if(value->string) {
       /* This lookup should be optimized */
       u_int16_t app_protocol = ndpi_get_proto_by_name(get_ndpi_struct(), value->string);
       return (flow->l7_proto.app_protocol == app_protocol);
@@ -858,29 +891,29 @@ bool ZMQParserInterface::matchPENNtopField(ParsedFlow * const flow, u_int32_t fi
       return false;
 
   case DNS_QUERY:
-    if (value->string && flow->dns_query)
+    if(value->string && flow->dns_query)
       return (strcmp(flow->dns_query, value->string) == 0);
     else
       return false;
 
   case DNS_QUERY_TYPE:
-    if (value->string) return (flow->dns_query_type == atoi(value->string));
+    if(value->string) return (flow->dns_query_type == atoi(value->string));
     else return (flow->dns_query_type == value->int_num);
 
   case HTTP_URL:
-    if (value->string && flow->http_url)
+    if(value->string && flow->http_url)
       return (strcmp(flow->http_url, value->string) == 0);
     else
       return false;
 
   case HTTP_SITE:
-    if (value->string && flow->http_site)
+    if(value->string && flow->http_site)
       return (strcmp(flow->http_site, value->string) == 0);
     else
       return false;
 
   case SSL_SERVER_NAME:
-    if (value->string && flow->tls_server_name)
+    if(value->string && flow->tls_server_name)
       return (strcmp(flow->tls_server_name, value->string) == 0);
     else
       return false;
@@ -903,11 +936,11 @@ bool ZMQParserInterface::matchField(ParsedFlow * const flow, const char * const 
   u_int32_t pen, key_id;
   bool res;
 
-  if (!getKeyId((char*)key, strlen(key), &pen, &key_id)) {
+  if(!getKeyId((char*)key, strlen(key), &pen, &key_id)) {
     ntop->getTrace()->traceEvent(TRACE_WARNING, "Field %s not supported by flow filtering", key);
     return false;
   }
-  
+
   switch(pen) {
     case 0: /* No PEN */
       res = matchPENZeroField(flow, key_id, value);
@@ -927,7 +960,8 @@ bool ZMQParserInterface::matchField(ParsedFlow * const flow, const char * const 
 
 /* **************************************************** */
 
-bool ZMQParserInterface::parseNProbeAgentField(ParsedFlow * const flow, const char * const key, ParsedValue *value, json_object * const jvalue) const {
+bool ZMQParserInterface::parseNProbeAgentField(ParsedFlow * const flow, const char * const key,
+					       ParsedValue *value, json_object * const jvalue) const {
   bool ret = false;
   json_object *obj;
 
@@ -1033,8 +1067,10 @@ bool ZMQParserInterface::parseNProbeAgentField(ParsedFlow * const flow, const ch
 
 /* **************************************************** */
 
-void ZMQParserInterface::preprocessFlow(ParsedFlow *flow) {
+bool ZMQParserInterface::preprocessFlow(ParsedFlow *flow) {
   bool invalid_flow = false;
+  u_int32_t max_drift, boundary;
+  bool rc = false;
 
   if(flow->vlan_id && ntop->getPrefs()->do_ignore_vlans())
     flow->vlan_id = 0;
@@ -1068,7 +1104,7 @@ void ZMQParserInterface::preprocessFlow(ParsedFlow *flow) {
 	 && ntohs(flow->src_port) < ntohs(flow->dst_port))
 	flow->swap();
     } else if(ntop->getPrefs()->do_use_ports_to_determine_src_and_dst()) {
-      /* Attempt to determine flow client and server using port numbers 
+      /* Attempt to determine flow client and server using port numbers
        useful when exported flows are mono-directional
        https://github.com/ntop/ntopng/issues/1978 */
       if(ntohs(flow->src_port) < ntohs(flow->dst_port))
@@ -1078,11 +1114,43 @@ void ZMQParserInterface::preprocessFlow(ParsedFlow *flow) {
     if(flow->pkt_sampling_rate == 0)
       flow->pkt_sampling_rate = 1;
 
-    
-#if 0 /*
-	Disabled as this causes timestamps to be altered at every run, invalidating
-	first and last switched, as well as throughput data.
-       */
+    if(getTimeLastPktRcvdRemote() > 0) {
+      /*
+	 Adjust time to make sure time won't break ntopng
+
+	 getTimeLastPktRcvdRemote() can be zero at boot so the if()...
+      */
+      max_drift = 2*flow_max_idle;
+      boundary = getTimeLastPktRcvdRemote() - max_drift;
+      if(flow->first_switched < boundary) {
+#ifdef DEBUG_FLOW_DRIFT
+	ntop->getTrace()->traceEvent(TRACE_NORMAL, "Fixing first_switched [current: %u][max: %u][drift: %u]",
+				     flow->first_switched, boundary, boundary-flow->first_switched);
+#endif
+	flow->first_switched = boundary;
+
+	if(flow->first_switched > flow->last_switched)
+	  flow->last_switched = flow->first_switched;
+      }
+
+      boundary = getTimeLastPktRcvdRemote() + max_drift;
+      if(flow->last_switched > boundary) {
+#ifdef DEBUG_FLOW_DRIFT
+	ntop->getTrace()->traceEvent(TRACE_NORMAL, "Fixing last_switched [current: %u][max: %u][drift: %u]",
+				     flow->last_switched, boundary, flow->last_switched-boundary);
+#endif
+	flow->last_switched = boundary;
+
+	if(flow->last_switched < flow->first_switched)
+	  flow->last_switched = flow->first_switched;
+      }
+    }
+
+#if 0
+    /*
+      Disabled as this causes timestamps to be altered at every run, invalidating
+      first and last switched, as well as throughput data.
+    */
     /* We need to fix the clock drift */
     time_t now = time(NULL);
 
@@ -1119,18 +1187,24 @@ void ZMQParserInterface::preprocessFlow(ParsedFlow *flow) {
 
     /* Process Flow */
     PROFILING_SECTION_ENTER("processFlow", 30);
-    processFlow(flow);
+    rc = processFlow(flow);
     PROFILING_SECTION_EXIT(30);
   }
+
+  if (!rc)
+    recvStats.num_dropped_flows++;
+
+  return rc;
 }
 
 /* **************************************************** */
 
-void ZMQParserInterface::parseSingleJSONFlow(json_object *o,
+int ZMQParserInterface::parseSingleJSONFlow(json_object *o,
 					     u_int8_t source_id) {
   ParsedFlow flow;
   struct json_object_iterator it = json_object_iter_begin(o);
   struct json_object_iterator itEnd = json_object_iter_end(o);
+  int ret = 0;
 
   /* Reset data */
   flow.source_id = source_id;
@@ -1239,7 +1313,10 @@ void ZMQParserInterface::parseSingleJSONFlow(json_object *o,
     json_object_iter_next(&it);
   } // while json_object_iter_equal
 
-  preprocessFlow(&flow);
+  if (preprocessFlow(&flow))
+    ret = 1;
+
+  return ret;
 }
 
 /* **************************************************** */
@@ -1249,6 +1326,7 @@ int ZMQParserInterface::parseSingleTLVFlow(ndpi_deserializer *deserializer,
   ndpi_serialization_type kt, et;
   ParsedFlow flow;
   int ret = 0, rc;
+  bool recordFound = false;
 
   /* Reset data */
   flow.source_id = source_id;
@@ -1265,17 +1343,19 @@ int ZMQParserInterface::parseSingleTLVFlow(ndpi_deserializer *deserializer,
     int64_t i64 = 0;
     ndpi_string key, vs;
     char key_str[64];
-    u_int8_t vbkp;
+    u_int8_t vbkp = 0;
     bool add_to_additional_fields = false;
     bool key_is_string = false, value_is_string = false;
 
-    //ntop->getTrace()->traceEvent(TRACE_NORMAL, "TLV key type = %u value type = %u", kt, et);
+    // ntop->getTrace()->traceEvent(TRACE_NORMAL, "TLV key type = %u value type = %u", kt, et);
 
-    if (et == ndpi_serialization_end_of_record) {
+    if(et == ndpi_serialization_end_of_record) {
       ndpi_deserialize_next(deserializer);
       goto end_of_record;
     }
-      
+
+    recordFound = true;
+
     switch(kt) {
       case ndpi_serialization_uint32:
         ndpi_deserialize_key_uint32(deserializer, &key_id);
@@ -1387,7 +1467,7 @@ int ZMQParserInterface::parseSingleTLVFlow(ndpi_deserializer *deserializer,
     if(!rc) { /* Not handled */
       switch (key_id) {
 	case 0: //json additional object added by Flow::serialize()
-          if(strcmp(key_str,"json") == 0 && value_is_string) { 
+          if(strcmp(key_str,"json") == 0 && value_is_string) {
             json_object *additional_o = json_tokener_parse(vs.str);
 
             if(additional_o) {
@@ -1412,7 +1492,7 @@ int ZMQParserInterface::parseSingleTLVFlow(ndpi_deserializer *deserializer,
 	  }
 	  break;
 	case UNKNOWN_FLOW_ELEMENT:
-#if 0 // TODO 
+#if 0 // TODO
 	  /* Attempt to parse it as an nProbe mini field */
 	  if(parseNProbeAgentField(&flow, key_str, &value)) {
 	    if(!flow.hasParsedeBPF()) {
@@ -1446,17 +1526,19 @@ int ZMQParserInterface::parseSingleTLVFlow(ndpi_deserializer *deserializer,
     /* Restoring backed up character at the end of the string in place of '\0' */
     if(value_is_string) vs.str[vs.str_len] = vbkp;
 
-    /* Move to the next element */    
+    /* Move to the next element */
     ndpi_deserialize_next(deserializer);
 
   } /* while */
 
  end_of_record:
-
-  PROFILING_SECTION_EXIT(9); /* Closes Decode TLV */
-  PROFILING_SECTION_ENTER("processFlow", 10);
-  preprocessFlow(&flow);
-  PROFILING_SECTION_EXIT(10);
+  if(recordFound) {
+    PROFILING_SECTION_EXIT(9); /* Closes Decode TLV */
+    PROFILING_SECTION_ENTER("processFlow", 10);
+    if (preprocessFlow(&flow))
+      ret = 1;
+    PROFILING_SECTION_EXIT(10);
+  }
 
  error:
   return ret;
@@ -1476,23 +1558,28 @@ u_int8_t ZMQParserInterface::parseJSONFlow(const char * const payload, int paylo
   f = json_tokener_parse_verbose(payload, &jerr);
 
   if(f != NULL) {
-    int rc;
+    int n = 0, rc;
 
     if(json_object_get_type(f) == json_type_array) {
       /* Flow array */
       int id, num_elements = json_object_array_length(f);
 
-      for(id = 0; id < num_elements; id++)
-	parseSingleJSONFlow(json_object_array_get_idx(f, id), source_id);
+      for(id = 0; id < num_elements; id++) {
+	rc = parseSingleJSONFlow(json_object_array_get_idx(f, id), source_id);
 
-      rc = num_elements;
+        if (rc > 0)
+          n++;
+      }
+
     } else {
-      parseSingleJSONFlow(f, source_id);
-      rc = 1;
+      rc = parseSingleJSONFlow(f, source_id);
+
+      if (rc > 0)
+        n++;
     }
 
     json_object_put(f);
-    return(rc);
+    return n;
   } else {
     // if o != NULL
     if(!once) {
@@ -1516,15 +1603,15 @@ u_int8_t ZMQParserInterface::parseJSONFlow(const char * const payload, int paylo
 u_int8_t ZMQParserInterface::parseTLVFlow(const char * const payload, int payload_size, u_int8_t source_id, void *data) {
   ndpi_deserializer deserializer;
   ndpi_serialization_type kt;
-  int rc;
-  
+  int n = 0, rc;
+
   rc = ndpi_init_deserializer_buf(&deserializer, (u_int8_t *) payload, payload_size);
 
   if(rc == -1)
     return 0;
 
-  if (ndpi_deserialize_get_format(&deserializer) != ndpi_serialization_format_tlv) {
-    if (!once) {
+  if(ndpi_deserialize_get_format(&deserializer) != ndpi_serialization_format_tlv) {
+    if(!once) {
       ntop->getTrace()->traceEvent(TRACE_WARNING,
         "Invalid TLV message: the TLV generated by your probe does not match the version supported "
         "by ntopng, please update both the probe and ntopng to the latest version available");
@@ -1532,15 +1619,17 @@ u_int8_t ZMQParserInterface::parseTLVFlow(const char * const payload, int payloa
     }
     return 0;
   }
-   
-  rc = 0;
+
   while(ndpi_deserialize_get_item_type(&deserializer, &kt) != ndpi_serialization_unknown) {
-    if(parseSingleTLVFlow(&deserializer, source_id) != 0)
+    rc = parseSingleTLVFlow(&deserializer, source_id);
+
+    if (rc < 0)
       break;
-    rc++;
+    else if (rc > 0)
+      n++;
   }
 
-  return rc;
+  return n;
 }
 
 /* **************************************************** */
@@ -1648,11 +1737,11 @@ u_int8_t ZMQParserInterface::parseCounter(const char * const payload, int payloa
 
 /* **************************************************** */
 
-/* 
+/*
  * Minimum set of fields expected by ntopng
- * NOTE: 
+ * NOTE:
  * - the following fields may or may not appear depending on the traffic:
- *   "IPV4_SRC_ADDR", "IPV4_DST_ADDR", "IPV6_SRC_ADDR", "IPV6_DST_ADDR" 
+ *   "IPV4_SRC_ADDR", "IPV4_DST_ADDR", "IPV6_SRC_ADDR", "IPV6_DST_ADDR"
  * - some fields may not appear when nprobe runs with --collector-passthrough
  *   "L7_PROTO"
  */
@@ -1883,14 +1972,8 @@ u_int32_t ZMQParserInterface::periodicStatsUpdateFrequency() const {
     update_freq = max_val(max_val(zrs->remote_lifetime_timeout, zrs->remote_idle_timeout), zrs->remote_collected_lifetime_timeout);
   else
     update_freq = update_freq_min;
-  
+
   return max_val(update_freq, update_freq_min);
-}
-
-/* **************************************** */
-
-u_int32_t ZMQParserInterface::getFlowMaxIdle() {
-  return flow_max_idle;
 }
 
 /* **************************************** */
@@ -1916,7 +1999,7 @@ void ZMQParserInterface::setRemoteStats(ZMQ_RemoteStats *zrs) {
 
   memcpy(last_zrs, zrs, sizeof(ZMQ_RemoteStats));
 
-  if (Utils::msTimevalDiff(&now, &last_zmq_remote_stats_update) < 1000) {
+  if(Utils::msTimevalDiff(&now, &last_zmq_remote_stats_update) < 1000) {
     /* Do not update cumulative stats more frequently than once per second.
      * Note: this also avoids concurrent access (use after free) of shadow */
     return;
@@ -1925,12 +2008,13 @@ void ZMQParserInterface::setRemoteStats(ZMQ_RemoteStats *zrs) {
   /* Sum stats from all exporters */
 
   cumulative_zrs = (ZMQ_RemoteStats*) calloc(1, sizeof(ZMQ_RemoteStats));
-  if (!cumulative_zrs)
+  if(!cumulative_zrs)
     return;
 
   for(it = source_id_last_zmq_remote_stats.begin(); it != source_id_last_zmq_remote_stats.end(); ) {
     ZMQ_RemoteStats *zrs_i = it->second;
-    if (zrs_i->local_time < last_time - 3 /* sec */) {
+
+    if(zrs_i->local_time < last_time - 3 /* sec */) {
       /* do not account inactive exporters, release them */
       free(zrs_i);
       source_id_last_zmq_remote_stats.erase(it++);
@@ -1940,7 +2024,7 @@ void ZMQParserInterface::setRemoteStats(ZMQ_RemoteStats *zrs) {
       Utils::snappend(cumulative_zrs->remote_probe_address, sizeof(cumulative_zrs->remote_probe_address), zrs_i->remote_probe_address, ",");
       Utils::snappend(cumulative_zrs->remote_probe_public_address,  sizeof(cumulative_zrs->remote_probe_public_address), zrs_i->remote_probe_public_address, ",");
       Utils::snappend(cumulative_zrs->remote_probe_version,  sizeof(cumulative_zrs->remote_probe_version), zrs_i->remote_probe_version, ",");
-      Utils::snappend(cumulative_zrs->remote_probe_os,  sizeof(cumulative_zrs->remote_probe_os), zrs_i->remote_probe_os, ",");      
+      Utils::snappend(cumulative_zrs->remote_probe_os,  sizeof(cumulative_zrs->remote_probe_os), zrs_i->remote_probe_os, ",");
       cumulative_zrs->num_exporters += zrs_i->num_exporters;
       cumulative_zrs->remote_bytes += zrs_i->remote_bytes;
       cumulative_zrs->remote_pkts += zrs_i->remote_pkts;
@@ -2028,7 +2112,8 @@ void ZMQParserInterface::lua(lua_State* vm) {
       lua_push_str_table_entry(vm, "probe.probe_version", zrs->remote_probe_version);
     if(zrs->remote_probe_os[0] != '\0')
       lua_push_str_table_entry(vm, "probe.probe_os", zrs->remote_probe_os);
-    
+    lua_push_uint64_table_entry(vm, "probe.remote_time", zrs->remote_time);
+
     lua_push_uint64_table_entry(vm, "zmq.num_flow_exports", zrs->num_flow_exports - zmq_remote_initial_exported_flows);
     lua_push_uint64_table_entry(vm, "zmq.num_exporters", zrs->num_exporters);
 
@@ -2043,6 +2128,12 @@ void ZMQParserInterface::lua(lua_State* vm) {
     lua_push_uint64_table_entry(vm, "timeout.collected_lifetime", zrs->remote_collected_lifetime_timeout);
     lua_push_uint64_table_entry(vm, "timeout.idle", zrs->remote_idle_timeout);
   }
+}
+
+/* **************************************************** */
+
+u_int32_t ZMQParserInterface::getFlowMaxIdle() {
+  return(max(remote_idle_timeout, flow_max_idle));
 }
 
 /* **************************************************** */

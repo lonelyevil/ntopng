@@ -10,7 +10,7 @@ require "lua_utils"
 local alert_utils = require "alert_utils"
 local format_utils = require "format_utils"
 local have_nedge = ntop.isnEdge()
-local NfConfig = nil
+local nf_config = nil
 local flow_consts = require "flow_consts"
 local dscp_consts = require "dscp_consts"
 require "flow_utils"
@@ -21,7 +21,7 @@ if ntop.isPro() then
 
    if ntop.isnEdge() then
       package.path = dirs.installdir .. "/scripts/lua/pro/nedge/modules/?.lua;" .. package.path
-      NfConfig = require("nf_config")
+      nf_config = require("nf_config")
    end
 end
 
@@ -296,27 +296,11 @@ local tls_cipher_suites = {
    SSL2_RC4_64_WITH_MD5=0x080080,
 }
 
-function tlsVersion2Str(v)
-   -- TODO: Use ndpi_ssl_version2str()
-   if(v == 768) then
-      return("SSL v3")
-   elseif(v == 769) then
-      return("TLS v1");
-   elseif(v == 770) then
-      return("TLS v1.1");
-   elseif(v == 771) then
-      return("TLS v1.2");
-   elseif(v == 772) then
-      return("TLS v1.3");
-   elseif(v == 64282) then
-      return("TLS v1.3 (Fizz)");
-   elseif(v == 65279) then
-      return("DTLS v1.0");
-   elseif(v == 65277) then
-      return("DTLS v1.2");
-
+local function colorNotZero(v)
+   if(v == 0) then
+      return("0")
    else
-      return("TLS "..flow["protos.tls_version"])
+      return('<span style="color: red">'..formatValue(v).."</span>")
    end
 end
 
@@ -326,6 +310,93 @@ local function cipher2str(c)
    for s,v in pairs(tls_cipher_suites) do
       if(v == c) then
 	 return('<A HREF="https://ciphersuite.info/cs/'..s..'">'..s..'</A>')
+      end
+   end
+
+   return(c)
+end
+
+-- #####################
+
+local iec104_typeids = {
+   M_SP_NA_1=0x01,
+   M_SP_TA_1=0x02,
+   M_DP_NA_1=0x03,
+   M_DP_TA_1=0x04,
+   M_ST_NA_1=0x05,
+   M_ST_TA_1=0x06,
+   M_BO_NA_1=0x07,
+   M_BO_TA_1=0x08,
+   M_ME_NA_1=0x09,
+   M_ME_TA_1=0x0A,
+   M_ME_NB_1=0x0B,
+   M_ME_TB_1=0x0C,
+   M_ME_NC_1=0x0D,
+   M_ME_TC_1=0x0E,
+   M_IT_NA_1=0x0F,
+   M_IT_TA_1=0x10,
+   M_EP_TA_1=0x11,
+   M_EP_TB_1=0x12,
+   M_EP_TC_1=0x13,
+   M_PS_NA_1=0x14,
+   M_ME_ND_1=0x15,
+   M_SP_TB_1=30,
+   M_DP_TB_1=31,
+   M_ST_TB_1=32,
+   M_BO_TB_1=33,
+   M_ME_TD_1=34,
+   M_ME_TE_1=35,
+   M_ME_TF_1=36,
+   M_IT_TB_1=37,
+   M_EP_TD_1=38,
+   M_EP_TE_1=39,
+   M_EP_TF_1=40,
+   ASDU_TYPE_41=41,
+   ASDU_TYPE_42=42,
+   ASDU_TYPE_43=43,
+   ASDU_TYPE_44=44,
+   C_SC_NA_1=45,
+   C_DC_NA_1=46,
+   C_RC_NA_1=47,
+   C_SE_NA_1=48,
+   C_SE_NB_1=49,
+   C_SE_NC_1=50,
+   C_BO_NA_1=51,
+   C_SC_TA_1=58,
+   C_DC_TA_1=59,
+   C_RC_TA_1=60,
+   C_SE_TA_1=61,
+   C_SE_TB_1=62,
+   C_SE_TC_1=63,
+   C_BO_TA_1=64,
+   M_EI_NA_1=70,
+   C_IC_NA_1=100,
+   C_CI_NA_1=101,
+   C_RD_NA_1=102,
+   C_CS_NA_1=103,
+   C_TS_NA_1=104,
+   C_RP_NA_1=105,
+   C_CD_NA_1=106,
+   C_TS_TA_1=107,
+   P_ME_NA_1=110,
+   P_ME_NB_1=111,
+   P_ME_NC_1=112,
+   P_AC_NA_1=113,
+   F_FR_NA_1=120,
+   F_SR_NA_1=121,
+   F_SC_NA_1=122,
+   F_LS_NA_1=123,
+   F_FA_NA_1=124,
+   F_SG_NA_1=125,
+   F_DR_TA_1=126,
+}
+
+local function iec104_typeids2str(c)
+   if(c == nil) then return end
+
+   for s,v in pairs(iec104_typeids) do
+      if(v == c) then
+	 return(s.." (".. v ..")")
       end
    end
 
@@ -470,7 +541,7 @@ local function printAddCustomHostRule(full_url)
    function addToCustomizedCategories() {
       var is_category = ($("#new_rule_type").val() == "category");
       var target_value = is_category ? $("#flow_target_category").val() : $("#flow_target_app").val();;
-      var target_url = cleanCustomHostUrl($("#categories_url_add").val());
+      var target_url = NtopUtils.cleanCustomHostUrl($("#categories_url_add").val());
 
       if(!target_value || !target_url)
 	 return;
@@ -483,7 +554,7 @@ local function printAddCustomHostRule(full_url)
       else
 	 params.l7proto = target_value;
 
-      paramsToForm('<form method="post"></form>', params).appendTo('body').submit();
+      NtopUtils.paramsToForm('<form method="post"></form>', params).appendTo('body').submit();
    }
 
    function new_rule_dropdown_select(dropdown) {
@@ -602,7 +673,7 @@ else
    end
 
    ifstats = interface.getStats()
-   print("<table class=\"table table-bordered table-striped\">\n")
+   print("<div class='table-responsive'><table class=\"table table-bordered table-striped\">\n")
    if ifstats.vlan and flow["vlan"] > 0 then
       print("<tr><th width=30%>")
       print(i18n("details.vlan_id"))
@@ -632,7 +703,13 @@ else
 
    if((flow["protos.tls_version"] ~= nil)
       and (flow["protos.tls_version"] ~= 0)) then
-      print(" [ "..tlsVersion2Str(flow["protos.tls_version"]).." ]")
+      local tls_version_name = ntop.getTLSVersionName(flow["protos.tls_version"])
+
+      if isEmptyString(tls_version_name) then
+	 print(" [ TLS"..flow["protos.tls_version"].." ]")
+      else
+	 print(" [ "..tls_version_name.." ]")
+      end
       if(tonumber(flow["protos.tls_version"]) < 771) then
 	 print(' <i class="fas fa-exclamation-triangle" aria-hidden=true style="color: orange;"></i> ')
 	 print(i18n("flow_details.tls_old_protocol_version"))
@@ -692,7 +769,7 @@ else
       -- ENABLE MARKER DEBUG
       if ntop.isnEdge() and false then
         print("<tr><th width=30%>"..i18n("flow_details.flow_marker").."</th>")
-        print("<td colspan=2>".. NfConfig.formatMarker(flow["marker"]) .."</td>")
+        print("<td colspan=2>".. nf_config.formatMarker(flow["marker"]) .."</td>")
         print("</tr>")
       end
 
@@ -774,6 +851,99 @@ else
       print("</td></tr>\n")
    end
 
+   if(flow.iec104 and (table.len(flow.iec104.typeid) > 0)) then
+      print("<tr><th rowspan=5 width=30%><A HREF='https://en.wikipedia.org/wiki/IEC_60870-5'>IEC 60870-5-104</A> <i class='fas fa-external-link-alt'></i></th><th>"..i18n("flow_details.iec104_mask").."</th><td>")
+      
+      total = 0
+      for k,v in pairsByKeys(flow.iec104.typeid, rev) do
+	 total = total + v
+      end
+
+      print("<table border width=100%>")
+      for k,v in pairsByValues(flow.iec104.typeid, rev) do
+	 local pctg = (v*100)/total
+	 local key = iec104_typeids2str(tonumber(k))
+
+	 print(string.format("<th>%s</th><td align=right>%.3f %%</td></tr>\n", key, pctg))
+      end
+      
+      print("</table>\n")
+      print("</td></tr>\n")
+      
+      -- #########################
+
+      print("<tr><th>".. i18n("flow_details.iec104_transitions") .."</th><td>")
+
+      total = 0
+      for k,v in pairsByValues(flow.iec104.typeid_transitions, rev) do
+	 total = total+v
+      end
+      
+      print("<table border width=100%>")
+      for k,v in pairsByValues(flow.iec104.typeid_transitions, rev) do
+	 local pctg = (v*100)/total
+	 local keys = split(k, ",")
+	 local key = iec104_typeids2str(tonumber(keys[1]))
+
+	 if(keys[1] == keys[2]) then
+	    key = key ..' <i class="fas fa-exchange-alt"></i> '
+	 else
+	    key = key ..' <i class="fas fa-arrow-right"></i> '
+	 end
+
+	 key = key .. iec104_typeids2str(tonumber(keys[2]))
+	 
+	 print(string.format("<tr><th>%s</th><td align=right>%.3f %%</td></tr>\n", key, pctg))
+      end
+      
+      print("</table>\n")
+      print("</td></tr>\n")
+
+      -- #########################
+	 
+      print("<tr><th>"..i18n("flow_details.iec104_latency").."</th><td>")
+      if(flow.iec104.ack_time.stddev > flow.iec104.ack_time.average) then
+	 on = "<font color=red>"
+	 off = "</font>"
+      else
+	 on = ""
+	 off = ""
+      end
+      if((flow.iec104.ack_time.average > 1000) or (flow.iec104.ack_time.stddev > 1000)) then
+	 print(string.format("%.3f sec (%s%.3f sec%s)", flow.iec104.ack_time.average/1000, on, (flow.iec104.ack_time.stddev/1000), off))
+      else
+	 print(string.format("%.3f ms (%s%.3f msec%s)", flow.iec104.ack_time.average, on, flow.iec104.ack_time.stddev, off))
+      end
+      print("</td></tr>\n")
+
+      print("<tr><th>"..i18n("flow_details.iec104_msg_breakdown").."</th><td>")
+      local total = flow.iec104.stats.forward_msgs + flow.iec104.stats.reverse_msgs
+      local pctg = string.format("%.1f", (flow.iec104.stats.forward_msgs * 100) / total)
+
+      if(flow["srv.port"] == 2404) then
+	 -- we need to swap directions
+	 pctg = 100-pctg	 
+      end
+      
+      print('<div class="progress"><div class="progress-bar bg-warning" style="width: ' .. pctg .. '%;">'..pctg..'% </div>')
+      pctg = 100-pctg
+      print('<div class="progress-bar bg-info" style="width: ' .. pctg .. '%;">'..pctg..'% </div></div>')
+      -- print(formatValue(flow.iec104.stats.forward_msgs).." RX / "..formatValue(flow.iec104.stats.reverse_msgs).." TX")
+      print("</td></tr>\n")
+
+      print("<tr><th>"..i18n("flow_details.iec104_msg_loss").."</th><td>")
+      print("<i class=\"fas fa-arrow-left\"></i> "..colorNotZero(flow.iec104.pkt_lost.rx)..", <i class=\"fas fa-arrow-right\"></i> "..colorNotZero(flow.iec104.pkt_lost.tx).." / ")
+
+      if(flow.iec104.stats.retransmitted_msgs == 0) then
+	 print("0")
+      else
+	 print(colorNotZero(flow.iec104.stats.retransmitted_msgs))
+      end
+      print(" Retransmitted")
+      print("</td></tr>\n")
+
+   end
+
    print("<tr><th width=30%>"..i18n("flow_details.tos").."</th>")
    print("<td>"..(dscp_consts.dscp_descr(flow.tos.client.DSCP)) .." / ".. (dscp_consts.ecn_descr(flow.tos.client.ECN)) .."</td>")
    print("<td>"..(dscp_consts.dscp_descr(flow.tos.server.DSCP)) .." / ".. (dscp_consts.ecn_descr(flow.tos.server.ECN)) .."</td>")
@@ -792,7 +962,7 @@ else
 	 print("</td></tr>\n")
 
 	 -- Inspired by https://gist.github.com/geraldcombs/d38ed62650b1730fb4e90e2462f16125
-	 print("<tr><th width=30%><A HREF=\"https://en.wikipedia.org/wiki/Velocity_factor\">"..i18n("flow_details.rtt_distance").."</A></th><td>")
+	 print("<tr><th width=30%><A HREF=\"https://en.wikipedia.org/wiki/Velocity_factor\" target=\"_blank\">"..i18n("flow_details.rtt_distance").."</A> <i class=\"fas fa-external-link-alt\"></i></th><td>")
 	 local c_vacuum_km_s = 299792
 	 local c_vacuum_mi_s = 186000
 	 local fiber_vf      = .67
@@ -944,8 +1114,8 @@ else
 
    if((flow["tcp.max_thpt.cli2srv"] ~= nil) and (flow["tcp.max_thpt.cli2srv"] > 0)) then
      print("<tr><th width=30%>"..
-     '<a href="https://en.wikipedia.org/wiki/TCP_tuning" data-toggle="tooltip" title="'..i18n("flow_details.computed_as_tcp_window_size_rtt")..'">'..
-     i18n("flow_details.max_estimated_tcp_throughput").."</a><td nowrap> "..i18n("client").." <i class=\"fas fa-arrow-right\"></i> "..i18n("server")..": ")
+     '<a href="https://en.wikipedia.org/wiki/TCP_tuning" data-toggle="tooltip" target=\"_blank\" title="'..i18n("flow_details.computed_as_tcp_window_size_rtt")..'">'..
+     i18n("flow_details.max_estimated_tcp_throughput").."</a> <i class=\"fas fa-external-link-alt\"></i><td nowrap> "..i18n("client").." <i class=\"fas fa-arrow-right\"></i> "..i18n("server")..": ")
      print(bitsToSize(flow["tcp.max_thpt.cli2srv"]))
      print("</td><td> "..i18n("client").." <i class=\"fas fa-arrow-left\"></i> "..i18n("server")..": ")
      print(bitsToSize(flow["tcp.max_thpt.srv2cli"]))
@@ -1030,20 +1200,14 @@ else
 
    -- ######################################
 
-   if(flow["flow_risk"] ~= nil) then
+   if flow["flow_risk"] and table.len(flow["flow_risk"]) > 0 then
       local flow_risk_utils = require "flow_risk_utils"
       local risk = flow["flow_risk"]
 
       print("<tr><th width=30%>"..status_icon..i18n("flow_details.flow_anomalies").."</th><td colspan=2>")
 
-      local cur_risk = 1
       for risk_str,risk_id in pairs(risk) do
-	 if cur_risk > 1 then
-	    print("<br>")
-	 end
-
-	 print(flow_risk_utils.risk_id_2_i18n(risk_id))
-	 cur_risk = cur_risk + 1
+	 print(flow_risk_utils.risk_id_2_i18n(risk_id).."<br>")
       end
 
       print("</td></tr>")
@@ -1052,19 +1216,17 @@ else
    -- ######################################
 
    local alerted_status = nil
-   local status_infos = flow["status_infos"]
 
    if flow["flow.alerted"] then
       alerted_status = flow["alerted_status"]
-      local status_info = status_infos[alerted_status]
       local alert_info = flow2statusinfo(flow)
-      local message = flow_consts.getStatusDescription(alerted_status, alert_info)
-      if status_info then
-	 message = message .. string.format(" [%s: %d]", i18n("score"), status_info.score)
-      end
-      message = message .. alert_utils.getConfigsetAlertLink(alert_info)
+      local message =  flow_consts.getStatusDescription(alerted_status, alert_info)
+      local icon = flow_consts.getStatusIcon(message, flow["alerted_severity"])
 
-      print("<tr><th width=30%><i class='fas fa-exclamation-triangle' style='color: #B94A48'></i> "..i18n("flow_details.flow_alerted").."</th><td colspan=2>")
+      message = message .. string.format(" [%s: %d]", i18n("score"), flow["alerted_status_score"])
+      message = icon .. message .. alert_utils.getConfigsetAlertLink(alert_info)
+
+      print("<tr><th width=30%>"..i18n("flow_details.flow_alerted").."</th><td colspan=2>")
       print(message)
       print("</td></tr>\n")
    end
@@ -1078,39 +1240,33 @@ else
    end
 
    if(additional_status ~= 0) then
-      local configsets = user_scripts.getConfigsets()
-      local view_ifid
-
-      if interface.isViewed() then
-	 view_ifid = interface.viewedBy()
-      else
-	 view_ifid = ifid
-      end
-
-      -- Flows config is global, system-wide
-      local flows_config, confset_id = user_scripts.getConfigById(configsets, user_scripts.DEFAULT_CONFIGSET_ID, "flow")
-
-      print("<tr><th width=30%>"..status_icon..i18n("flow_details.additional_flow_status").."</th><td colspan=2>")
+      print("<tr><th width=30%>"..i18n("flow_details.additional_flow_status").."</th><td colspan=2>")
       for _, t in pairsByKeys(flow_consts.status_types) do
 	 local id = t.status_key
 
-         if ntop.bitmapIsSet(additional_status, id) then
-	    local status_info = status_infos[id]
-	    local detail = ""
+	 if ntop.bitmapIsSet(additional_status, id) then
+	    local alert_info = flow2statusinfo(flow)
+	    local message = flow_consts.getStatusDescription(id, alert_info)
 
-	    if status_info then
-	       detail = string.format(" [%s: %d]", i18n("score"), status_info.score)
-	       detail = detail .. alert_utils.getConfigsetAlertLink({alert_generation = {confset_id = confset_id, subdir = "flow", script_key = status_info.user_script}})
-	    end
-
-            print(flow_consts.getStatusDescription(id, flow2statusinfo(flow))..detail.."<br />")
-         end
+	    print(message.."<br />")
+	 end
       end
       print("</td></tr>\n")
    end
 
-   if(isScoreEnabled() and (flow.score > 0)) then
-      print("<tr><th width=30%>"..i18n("flow_details.flow_score").."</th><td colspan=2>"..flow["score"].."</td></tr>\n")
+   if(isScoreEnabled() and (flow.score.flow_score > 0)) then
+      print("\n<tr><th width=30%>"..i18n("flow_details.flow_score").."</th><td>"..flow.score.flow_score.."</td>\n")
+
+      local score_category_network  = flow.score.host_categories_total["0"]
+      local score_category_security = flow.score.host_categories_total["1"]
+      local tot                     = score_category_network + score_category_security
+
+      score_category_network  = (score_category_network*100)/tot
+      score_category_security = 100 - score_category_network
+
+      print('<td><div class="progress"><div class="progress-bar bg-warning" style="width: '..score_category_network..'%;">'.. i18n("flow_details.score_category_network"))
+      print('</div><div class="progress-bar bg-info" style="width: ' .. score_category_security .. '%;">' .. i18n("flow_details.score_category_security") .. '</div></div></td>\n')
+      print("</tr>\n")
    end
 
    if(flow.entropy and flow.entropy.client and flow.entropy.server) then
@@ -1119,7 +1275,11 @@ else
       print("<td>"..i18n("client").." <i class=\"fas fa-arrow-left\"></i> "..i18n("server")..": ".. string.format("%.3f", flow.entropy.server) .. "</td>")
       print("</tr>\n")
    end
-   
+
+   if((flow.community_id ~= nil) and (flow.community_id ~= "")) then
+      print("<tr><th width=30%><A HREF=\"https://github.com/corelight/community-id-spec\" target=\"_blank\">CommunityId</A> <i class=\"fas fa-external-link-alt\"></i></th><td colspan=2>".. flow.community_id .."</td></tr>\n")
+   end
+
    if((flow.client_process == nil) and (flow.server_process == nil)) then
       print("<tr><th width=30%>"..i18n("flow_details.actual_peak_throughput").."</th><td width=20%>")
       if (throughput_type == "bps") then
@@ -1216,15 +1376,18 @@ else
       if(not isEmptyString(flow["host_server_name"])) then
 	 s = flow["host_server_name"]
       end
-      print("<A HREF=\"http://"..page_utils.safe_html(s).."\">"..page_utils.safe_html(s).."</A> <i class=\"fas fa-external-link-alt\"></i>")
+      print("<A HREF=\"http://"..page_utils.safe_html(s).."\" target=\"_blank\">"..page_utils.safe_html(s).."</A> <i class=\"fas fa-external-link-alt\"></i>")
       if(flow["category"] ~= nil) then print(" "..getCategoryIcon(flow["host_server_name"], flow["category"])) end
       printAddCustomHostRule(s)
       print("</td></tr>\n")
 
       print("<tr><th>"..i18n("flow_details.url").."</th><td colspan=2>")
       print("<A HREF=\"http://")
-      if(flow["srv.port"] ~= 80) then print(":"..flow["srv.port"]) end
-      print(page_utils.safe_html(flow["protos.http.last_url"]).."\">"..page_utils.safe_html(flow["protos.http.last_url"]).."</A> <i class=\"fas fa-external-link-alt\">")
+      -- if(flow["srv.port"] ~= 80) then print(":"..flow["srv.port"]) end
+
+      local last_url = page_utils.safe_html(flow["protos.http.last_url"])
+      local last_url_short = shortenString(last_url, 64)
+      print(last_url.."\" target=\"_blank\">"..last_url_short.."</A> <i class=\"fas fa-external-link-alt\">")
       print("</td></tr>\n")
 
       if not have_nedge and flow["protos.http.last_return_code"] and flow["protos.http.last_return_code"] ~= 0 then
@@ -1280,7 +1443,6 @@ else
       end
       info = syminfo
 
-
       -- get SIP rows
       if(ntop.isPro() and (flow["proto.ndpi"] == "SIP")) then
         local sip_table_rows = getSIPTableRows(info)
@@ -1310,6 +1472,11 @@ else
 	 snmpdevice = syminfo["NPROBE_IPV4_ADDRESS"]
       end
 
+      if flow["device_id"] and flow["device_id"] ~= 0 then
+         print("<tr><th>"..i18n("details.device_id").."</th>")
+         print("<td colspan=\"2\">"..flow["device_id"].."</td></tr>")
+      end
+
       if flow["in_index"] or flow["out_index"] then
 	 printFlowSNMPInfo(snmpdevice, flow["in_index"], flow["out_index"])
       end
@@ -1327,7 +1494,7 @@ else
 	 num = num + 1
       end
    end
-   print("</table>\n")
+   print("</table></div>\n")
 end
 
 print [[
@@ -1384,27 +1551,27 @@ print[[
 			var rsp = jQuery.parseJSON(content);
 			$('#first_seen').html(rsp["seen.first"]);
 			$('#last_seen').html(rsp["seen.last"]);
-			$('#volume').html(bytesToVolume(rsp.bytes));
-			$('#goodput_volume').html(bytesToVolume(rsp["goodput_bytes"]));
+			$('#volume').html(NtopUtils.bytesToVolume(rsp.bytes));
+			$('#goodput_volume').html(NtopUtils.bytesToVolume(rsp["goodput_bytes"]));
 			pctg = ((rsp["goodput_bytes"]*100)/rsp["bytes"]).toFixed(1);
 
 			/* 50 is the same threshold specified in FLOW_GOODPUT_THRESHOLD */
 			if(pctg < 50) { pctg = "<font color=red>"+pctg+"</font>"; } else if(pctg < 60) { pctg = "<font color=orange>"+pctg+"</font>"; }
 
 			$('#goodput_percentage').html(pctg);
-			$('#cli2srv').html(addCommas(rsp["cli2srv.packets"])+" Pkts / " + addCommas(bytesToVolume(rsp["cli2srv.bytes"])));
-			$('#srv2cli').html(addCommas(rsp["srv2cli.packets"])+" Pkts / " + addCommas(bytesToVolume(rsp["srv2cli.bytes"])));
+			$('#cli2srv').html(NtopUtils.addCommas(rsp["cli2srv.packets"])+" Pkts / " + NtopUtils.addCommas(NtopUtils.bytesToVolume(rsp["cli2srv.bytes"])));
+			$('#srv2cli').html(NtopUtils.addCommas(rsp["srv2cli.packets"])+" Pkts / " + NtopUtils.addCommas(NtopUtils.bytesToVolume(rsp["srv2cli.bytes"])));
 			$('#throughput').html(rsp.throughput);
 
 			if(typeof rsp["c2sOOO"] !== "undefined") {
-			   $('#c2sOOO').html(formatPackets(rsp["c2sOOO"]));
-			   $('#s2cOOO').html(formatPackets(rsp["s2cOOO"]));
-			   $('#c2slost').html(formatPackets(rsp["c2slost"]));
-			   $('#s2clost').html(formatPackets(rsp["s2clost"]));
-			   $('#c2skeep_alive').html(formatPackets(rsp["c2skeep_alive"]));
-			   $('#s2ckeep_alive').html(formatPackets(rsp["s2ckeep_alive"]));
-			   $('#c2sretr').html(formatPackets(rsp["c2sretr"]));
-			   $('#s2cretr').html(formatPackets(rsp["s2cretr"]));
+			   $('#c2sOOO').html(NtopUtils.formatPackets(rsp["c2sOOO"]));
+			   $('#s2cOOO').html(NtopUtils.formatPackets(rsp["s2cOOO"]));
+			   $('#c2slost').html(NtopUtils.formatPackets(rsp["c2slost"]));
+			   $('#s2clost').html(NtopUtils.formatPackets(rsp["s2clost"]));
+			   $('#c2skeep_alive').html(NtopUtils.formatPackets(rsp["c2skeep_alive"]));
+			   $('#s2ckeep_alive').html(NtopUtils.formatPackets(rsp["s2ckeep_alive"]));
+			   $('#c2sretr').html(NtopUtils.formatPackets(rsp["c2sretr"]));
+			   $('#s2cretr').html(NtopUtils.formatPackets(rsp["s2cretr"]));
 			}
 			if (rsp["cli2srv_quota"]) $('#cli2srv_quota').html(rsp["cli2srv_quota"]);
 			if (rsp["srv2cli_quota"]) $('#srv2cli_quota').html(rsp["srv2cli_quota"]);

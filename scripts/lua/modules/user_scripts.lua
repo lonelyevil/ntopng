@@ -34,6 +34,19 @@ user_scripts.field_units = {
   syn_min = "field_units.syn_min",
 }
 
+-- ##############################################
+
+-- Operator functions associated to user scripts `operator`, which is specified
+-- both inside user scripts default configuration values, as well as when user scripts
+-- are configured from the UI.
+--
+user_scripts.operator_functions = {
+   gt --[[ greater than --]] = function(value, threshold) return value > threshold end,
+   lt --[[ less than    --]] = function(value, threshold) return value < threshold end,
+}
+
+-- ##############################################
+
 local REQUEST_PERIODIC_USER_SCRIPTS_RUN_KEY = "ntopng.cache.ifid_%i.user_scripts.request.granularity_%s"
 local NON_TRAFFIC_ELEMENT_CONF_KEY = "all"
 local NON_TRAFFIC_ELEMENT_ENTITY = "no_entity"
@@ -48,10 +61,6 @@ local available_subdirs = {
       label = "hosts",
       pools = "host_pools",
    }, {
-      id = "flow",
-      label = "flows",
-      -- No pools for flows
-   }, {
       id = "interface",
       label = "interfaces",
       pools = "interface_pools",
@@ -64,6 +73,10 @@ local available_subdirs = {
       label = "host_details.snmp",
       pools = "snmp_device_pools",
    }, {
+      id = "flow",
+      label = "flows",
+      -- No pools for flows
+   }, {
       id = "system",
       label = "system",
    }, {
@@ -73,40 +86,39 @@ local available_subdirs = {
 }
 
 -- User scripts category consts
+-- IMPORTANT keep it in sync with ntop_typedefs.h enum ScriptCategory
 user_scripts.script_categories = {
    other = {
+      id = 0,
       icon = "fas fa-scroll",
       i18n_title = "user_scripts.category_other",
       i18n_descr = "user_scripts.category_other_descr",
    },
    security = {
+      id = 1,
       icon = "fas fa-shield-alt",
       i18n_title = "user_scripts.category_security",
       i18n_descr = "user_scripts.category_security_descr",
    },
    internals = {
+      id = 2,
       icon = "fas fa-wrench",
       i18n_title = "user_scripts.category_internals",
       i18n_descr = "user_scripts.category_internals_descr",
    },
    network = {
+      id = 3,
       icon = "fas fa-network-wired",
       i18n_title = "user_scripts.category_network",
       i18n_descr = "user_scripts.category_network_descr",
    },
    system = {
+      id = 4,
       icon = "fas fa-server",
       i18n_title = "user_scripts.category_system",
       i18n_descr = "user_scripts.category_system_descr",
    }
 }
-
--- Auto-assign an id to the categories
-local cat_id = 1
-for cat_k, cat_v in pairs(user_scripts.script_categories) do
-   cat_v["id"] = cat_id
-   cat_id = cat_id + 1
-end
 
 -- Hook points for flow/periodic modules
 -- NOTE: keep in sync with the Documentation
@@ -143,6 +155,9 @@ user_scripts.script_types = {
     default_config_only = true, -- Only the default configset can be used
   }
 }
+
+-- ##############################################
+
 
 -- ##############################################
 
@@ -475,7 +490,7 @@ local function loadAndCheckScript(mod_fname, full_path, plugin, script_type, sub
    traceError(TRACE_DEBUG, TRACE_CONSOLE, string.format("Loading user script '%s'", mod_fname))
 
    local user_script = dofile(full_path)
-   
+
    if(type(user_script) ~= "table") then
       traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Loading '%s' failed", full_path))
       return(nil)
@@ -483,11 +498,6 @@ local function loadAndCheckScript(mod_fname, full_path, plugin, script_type, sub
 
    if((not return_all) and user_script.packet_interface_only and (not interface.isPacketInterface())) then
       traceError(TRACE_DEBUG, TRACE_CONSOLE, string.format("Skipping module '%s' for non packet interface", mod_fname))
-      return(nil)
-   end
-
-   if((not return_all) and user_script.external_alerts_only and (not interface.hasExternalAlerts())) then
-      traceError(TRACE_DEBUG, TRACE_CONSOLE, string.format("Skipping module '%s' for interface with no external alerts", mod_fname))
       return(nil)
    end
 
@@ -630,24 +640,6 @@ function user_scripts.load(ifid, script_type, subdir, options)
                end
             end
 
-	    if(rv.hooks["periodicUpdate"] ~= nil) then
-	       -- Set the update frequency
-	       local default_update_freq = 120		-- Default: every 2 minutes
-
-	       if(user_script.periodic_update_seconds ~= nil) then
-		  if((user_script.periodic_update_seconds % 30) ~= 0) then
-		     traceError(TRACE_WARNING, TRACE_CONSOLE, string.format(
-			"Update_periodicity '%s' is not multiple of 30 in '%s', using default (%u)",
-			user_script.periodic_update_seconds, user_script.key, default_update_freq))
-		     user_script.periodic_update_seconds = default_update_freq
-		  end
-	       else
-		  user_script.periodic_update_seconds = default_update_freq
-	       end
-
-	       user_script.periodic_update_divisor = math.floor(user_script.periodic_update_seconds / 30)
-	    end
-
             rv.modules[user_script.key] = user_script
          end
 
@@ -744,7 +736,70 @@ end
 
 -- ##############################################
 
-local function findConfigSet(configsets, name)
+-- @brief Reload user scripts with their existing configurations.
+--        Method called as part of plugins reload (during startup or when plugins are reloaded)
+-- @param is_load Boolean, indicating whether callback onLoad/onUnload should be called
+-- @return nil
+function user_scripts.loadUnloadUserScripts(is_load)
+   -- Read all existing configsets.
+   -- NOTE: A user script can have more than one configuration associated, each
+   -- one identified with an id. For example, hosts have multiple configurations,
+   -- each one applied to a different subset of pools. On the other hand, flows
+   -- and system only have only one (default) user script configuration.
+   local configsets = user_scripts.getConfigsets()
+
+   -- For each subdir available, (i.e., host, flow, interface, ...)
+   for _, subdir in ipairs(user_scripts.listSubdirs()) do
+      -- Load all the available user scripts for this subdir
+      local scripts = user_scripts.load(interface.getId(), user_scripts.getScriptType(subdir.id), subdir.id, {return_all = true})
+
+      for name, script in pairsByKeys(scripts.modules) do
+	 for confid, config in pairs(configsets) do
+	    -- Call user script callbacks for
+	    -- each available configuration existing for the user script
+	    if not config.config then
+	       traceError(TRACE_ERROR,TRACE_CONSOLE, string.format("Configuration is missing"))
+	       return
+	    end
+
+	    if not config.config[subdir.id] then
+	       traceError(TRACE_ERROR,TRACE_CONSOLE, string.format("Missing subdir '%s' from config", subdir.id))
+	       return
+	    end
+
+	    if not config.config[subdir.id][script.key] then
+	       -- Configuration can be empty (for example the first time a user script is added)
+	       traceError(TRACE_NORMAL,TRACE_CONSOLE,
+			  string.format("Script '%s' configuration is missing from subdir '%s'. New user script?", script.key, subdir.id))
+	    else
+	       local s = config.config[subdir.id][script.key]
+
+	       if(s ~= nil) then
+		  for hook, hook_config in pairs(s) do
+		     -- For each configuration there are multiple hooks.
+		     -- Some hooks can be enabled, whereas some other hooks can be disabled:
+		     -- methods onLoad/onUnload are only called for hooks that are enabled.
+		     if script and hook_config.enabled then
+			-- onLoad/onUnload methods are ONLY called for user scripts that are enabled
+			if is_load and script.onLoad then
+			   -- This is a load operation
+			   script.onLoad(hook, hook_config)
+			elseif not is_load and script.onUnload then
+			   -- This is an unload operation
+			   script.onUnload(hook, hook_config)
+			end
+		     end
+		  end
+	       end
+	    end
+	 end
+      end
+   end
+end
+
+-- ##############################################
+
+function user_scripts.findConfigSet(configsets, name)
    for id, configset in pairs(configsets) do
       if(configset.name == name) then
 	 return(configset)
@@ -811,6 +866,7 @@ function user_scripts.getConfigsets()
 
    -- Cache to avoid loading them again
    cached_config_sets = rv
+
    return(rv)
 end
 
@@ -868,7 +924,7 @@ end
 function user_scripts.createOrReplaceConfigset(configset)
    local configsets = user_scripts.getConfigsets()
 
-   local existing = findConfigSet(configsets, configset.name)
+   local existing = user_scripts.findConfigSet(configsets, configset.name)
    if existing then
       configsets[existing.id] = nil
    end
@@ -903,7 +959,7 @@ function user_scripts.renameConfigset(confid, new_name)
       return false, i18n("configsets.unknown_id", {confid=confid})
    end
 
-   local existing = findConfigSet(configsets, new_name)
+   local existing = user_scripts.findConfigSet(configsets, new_name)
 
    if existing then
       if(existing.id == confid) then
@@ -927,7 +983,7 @@ function user_scripts.cloneConfigset(confid, new_name)
       return false, i18n("configsets.unknown_id", {confid=confid})
    end
 
-   local existing = findConfigSet(configsets, new_name)
+   local existing = user_scripts.findConfigSet(configsets, new_name)
 
    if existing then
       return false, i18n("configsets.error_exists", {name=new_name})
@@ -998,9 +1054,71 @@ function user_scripts.updateScriptConfig(confid, script_key, subdir, new_config)
    local config = configsets[confid].config
 
    config[subdir] = config[subdir] or {}
+
+   if script then
+      local prev_config = config[subdir][script_key]
+
+      -- Perform hook callbacks for config changes, or enable/disable
+      for hook, hook_config in pairs(prev_config) do
+	 local hook_applied_config = applied_config[hook]
+
+	 if hook_applied_config then
+	    if script.onDisable and hook_config.enabled and not hook_applied_config.enabled then
+	       -- Hook previously disabled has been enabled
+	       script.onDisable(hook, hook_applied_config)
+	    elseif script.onEnable and not hook_config.enabled and hook_applied_config.enabled then
+	       -- Hook previously enabled has now been disabled
+	       script.onEnable(hook, hook_applied_config)
+	    elseif script.onUpdateConfig and not table.compare(hook_config, applied_config[hook]) then
+	       -- Configuration for the hook has changed
+	       script.onUpdateConfig(hook, hook_applied_config)
+	    end
+	 end
+      end
+   end
+
+   -- Set the new configuration
    config[subdir][script_key] = applied_config
 
    return saveConfigsets(configsets)
+end
+
+-- ##############################################
+
+-- @brief Toggles script `script_key` configuration on or off depending on `enable` for configuration `configset`
+--        Hooks onDisable and onEnable are called.
+-- @param configset A user script configuration, i.e., one of the configurations obtained with user_scripts.getConfigsets()
+-- @param script_key The string script identifier
+-- @param subdir The string identifying the sub directory (e.g., flow, host, ...)
+-- @param enable A boolean indicating whether the script shall be toggled on or off
+local function toggleScriptConfigset(configset, script_key, subdir, enable)
+   local script_type = user_scripts.getScriptType(subdir)
+   local script = user_scripts.loadModule(interface.getId(), script_type, subdir, script_key)
+
+   if not script then
+      return false, i18n("configsets.unknown_user_script", {user_script=script_key})
+   end
+
+   local config = user_scripts.getScriptConfig(configset, script, subdir)
+
+   if config then
+      for hook, hook_config in pairs(config) do
+	 -- Remember the previous toggle
+	 local prev_hook_config = hook_config.enabled
+	 -- Save the new toggle
+	 hook_config.enabled = enable
+
+	 if script.onDisable and prev_hook_config and not enable then
+	    -- Hook has been enabled for the user script
+	    script.onDisable(hook, hook_config)
+	 elseif script.onEnable and not prev_hook_config and enable then
+	    -- Hook has been disabled for the user script
+	    script.onEnable(hook, hook_config)
+	 end
+      end
+   end
+
+   return true
 end
 
 -- ##############################################
@@ -1009,28 +1127,80 @@ function user_scripts.toggleScript(confid, script_key, subdir, enable)
    local configsets = user_scripts.getConfigsets()
    local configset = configsets[confid]
 
-   if(configset == nil) then
-      return false, i18n("configsets.unknown_id", {confid=confid})
+   if not configset then
+      return false, i18n("configsets.unknown_id", {confid = confid})
    end
 
-   local script_type = user_scripts.getScriptType(subdir)
-   local script = user_scripts.loadModule(interface.getId(), script_type, subdir, script_key)
-
-   if(script == nil) then
-      return false, i18n("configsets.unknown_user_script", {user_script=script_key})
+   -- Toggle the configuration (result is put in `configset`)
+   local res, err = toggleScriptConfigset(configset, script_key, subdir, enable)
+   if not res then
+      return res, err
    end
 
-   local config = user_scripts.getScriptConfig(configset, script, subdir)
-
-   if(config == nil) then
-      return false
-   end
-
-   for _, hook in pairs(config) do
-      hook.enabled = enable
-   end
-
+   -- If the toggle has been successful, write the new configset and return
    return saveConfigsets(configsets)
+end
+
+-- ##############################################
+
+function user_scripts.toggleAllScripts(confid, subdir, enable)
+   local configsets = user_scripts.getConfigsets()
+   local configset = configsets[confid]
+
+   if not configset then
+      return false, i18n("configsets.unknown_id", {confid = confid})
+   end
+
+   -- Toggle the configuration (result is put in `configset`)
+   local scripts = user_scripts.load(getSystemInterfaceId(), user_scripts.getScriptType(subdir), subdir)
+
+   for script_name, script in pairs(scripts.modules) do
+      -- Toggle each script individually
+      local res, err = toggleScriptConfigset(configset, script.key, subdir, enable)
+      if not res then
+	 return res, err
+      end
+   end
+
+   -- If the toggle has been successful for all scripts, write the new configset and return
+   return saveConfigsets(configsets)
+end
+
+-- ##############################################
+
+-- @brief Returns the factory user scripts configuration
+--        Any user-submitted conf param is ignored
+function user_scripts.getFactoryConfig()
+   local ifid = getSystemInterfaceId()
+   local default_conf = {}
+
+   for type_id, script_type in pairs(user_scripts.script_types) do
+      for _, subdir in pairs(script_type.subdirs) do
+	 local scripts = user_scripts.load(ifid, script_type, subdir, {return_all = true})
+
+	 for key, usermod in pairs(scripts.modules) do
+	    default_conf[subdir] = default_conf[subdir] or {}
+	    default_conf[subdir][key] = default_conf[subdir][key] or {}
+	    local script_config = default_conf[subdir][key]
+	    local hooks = ternary(script_type.has_per_hook_config, usermod.hooks, {[ALL_HOOKS_CONFIG_KEY]=1})
+
+	    for hook in pairs(hooks) do
+	       script_config[hook] = {
+		  enabled = usermod.default_enabled or false,
+		  script_conf = usermod.default_value or {},
+	       }
+	    end
+	 end
+      end
+   end
+
+   local res = {
+      id = user_scripts.DEFAULT_CONFIGSET_ID,
+      name = i18n("policy_presets.default"),
+      config = default_conf,
+   }
+
+   return res
 end
 
 -- ##############################################

@@ -52,24 +52,24 @@ function datatableForEachRow(table, callbacks) {
    });
 }
 
-function datatableAddButtonCallback(td_idx, label, bs_class, callback_str, link) {
-   $("td:nth-child("+td_idx+")", $(this)).append('<a href="' + link + '" class="add-on btn" style="padding:0.2em;" onclick="' + callback_str + '" role="button"><span class="badge ' + bs_class + '">' + label + '</span></a>');
+function datatableAddButtonCallback(td_idx, label, bs_class, callback_str, link, visible = true) {
+   $("td:nth-child("+td_idx+")", $(this)).append('<a href="' + link + `" class="btn btn-sm mx-1 ${bs_class} ${!visible ? 'disabled' : ''}" onclick="` + callback_str + '" role="button">' + label + '</a>');
 }
 
 function datatableAddDeleteButtonCallback(td_idx, callback_str, label) {
-   datatableAddButtonCallback.bind(this)(td_idx, label, "badge-danger", callback_str, "javascript:void(0)");
+   datatableAddButtonCallback.bind(this)(td_idx, label, "btn-danger", callback_str, "javascript:void(0)");
 }
 
-function datatableAddActionButtonCallback(td_idx, callback_str, label) {
-   datatableAddButtonCallback.bind(this)(td_idx, label, "badge-info", callback_str, "javascript:void(0)");
+function datatableAddActionButtonCallback(td_idx, callback_str, label, visible = true) {
+   datatableAddButtonCallback.bind(this)(td_idx, label, "btn-info", callback_str, "javascript:void(0)", visible);
 }
 
 function datatableAddLinkButtonCallback(td_idx, link, label) {
-   datatableAddButtonCallback.bind(this)(td_idx, label, "badge-info", "", link);
+   datatableAddButtonCallback.bind(this)(td_idx, label, "btn-info", "", link);
 }
 
 function datatableMakeSelectUnique(tr_obj, added_rows_prefix, options) {
-   options = paramsExtend({
+   options = NtopUtils.paramsExtend({
       on_change: $.noop,                     /* A callback to be called when the select input changes */
       selector_fn: function(obj) {           /* A callback which receives a tr object and returns a single select input */
          return obj.find("select").first();
@@ -285,7 +285,7 @@ function datatableInitRefreshRows(table, column_id, refresh_interval, trend_colu
                 console.warn("Invalid number: " + new_val);
 
               if(!first_load)
-                arrows = " " + drawTrend(parseFloat(new_val), parseFloat(old_val));
+                arrows = " " + NtopUtils.drawTrend(parseFloat(new_val), parseFloat(old_val));
 
               // This value will be neede in the next refresh
               $cell.data("dt-rr-cur-val", new_val);

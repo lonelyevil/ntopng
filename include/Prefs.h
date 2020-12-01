@@ -43,7 +43,7 @@ class Prefs {
   char *http_binding_address1, *http_binding_address2;
   char *https_binding_address1, *https_binding_address2;
   bool enable_client_x509_auth, reproduce_at_original_speed;
-  char *lan_interface;
+  char *lan_interface, *wan_interface;
   Ntop *ntop;
   bool enable_dns_resolution, sniff_dns_responses, pcap_file_purge_hosts_flows,
     categorization_enabled, resolve_all_host_ip, change_user, daemonize,
@@ -53,7 +53,7 @@ class Prefs {
     service_license_check, enable_sql_log, enable_access_log, log_to_file,
     enable_mac_ndpi_stats, enable_activities_debug, enable_behaviour_analysis;
   TsDriver timeseries_driver;
-
+  u_int64_t iec104_allowed_typeids[2];  
   u_int32_t auth_session_duration;
   bool auth_session_midnight_expiration;
 
@@ -92,6 +92,9 @@ class Prefs {
   u_int16_t auto_assigned_pool_id;
   bool dump_flows_on_es, dump_flows_on_mysql, dump_flows_on_ls, dump_flows_on_nindex,
     dump_json_flows_on_disk, load_json_flows_from_disk_to_nindex, dump_ext_json;
+#ifdef NTOPNG_PRO
+  bool dump_flows_direct;
+#endif
   bool read_flows_from_mysql;
   bool enable_runtime_flows_dump; /**< runtime preference to enable/disable flows dump from the UI */
   InterfaceInfo *ifNames;
@@ -99,7 +102,7 @@ class Prefs {
   bool local_networks_set, shutdown_when_done, simulate_vlans, ignore_vlans, ignore_macs;
   u_int32_t num_simulated_ips;
   char *data_dir, *install_dir, *docs_dir, *scripts_dir,
-	  *callbacks_dir, *prefs_dir, *pcap_dir;
+	  *callbacks_dir, *pcap_dir;
   char *categorization_key;
   char *zmq_encryption_pwd;
   char *zmq_encryption_priv_key;
@@ -127,6 +130,10 @@ class Prefs {
   char *ls_host,*ls_port,*ls_proto;
   bool has_cmdl_trace_lvl; /**< Indicate whether a verbose level 
 			      has been provided on the command line.*/
+#ifndef HAVE_NEDGE
+  bool appliance;
+#endif
+
 #ifdef HAVE_TEST_MODE
   char *test_script_path;
 #endif
@@ -198,8 +205,14 @@ class Prefs {
   inline bool  do_dump_extended_json()                  { return(dump_ext_json);          };
   inline bool  do_dump_json_flows_on_disk()             { return(dump_json_flows_on_disk);   };
   inline bool  do_load_json_flows_from_disk_to_nindex() { return(load_json_flows_from_disk_to_nindex); };
-  inline bool  do_dump_flows()                          { return(dump_flows_on_es || dump_flows_on_mysql || dump_flows_on_ls || dump_flows_on_nindex); };
+  inline bool  do_dump_flows() const                    { return(dump_flows_on_es || dump_flows_on_mysql || dump_flows_on_ls || dump_flows_on_nindex); };
+
+#ifdef NTOPNG_PRO
+  inline void  toggle_dump_flows_direct(bool enable)    { dump_flows_direct = enable; };
+  inline bool  do_dump_flows_direct()                   { return(dump_flows_direct); };
+#endif
   inline bool is_runtime_flows_dump_enabled()     const { return(enable_runtime_flows_dump); };
+  inline bool is_flows_dump_enabled()             const { return(do_dump_flows() && is_runtime_flows_dump_enabled()); };
     
   int32_t getDefaultPrefsValue(const char *pref_key, int32_t default_value);
   void getDefaultStringPrefsValue(const char *pref_key, char **buffer, const char *default_value);
@@ -211,7 +224,6 @@ class Prefs {
   inline char* get_docs_dir()                                 { return(docs_dir);       }; // HTTP docs
   inline const char* get_scripts_dir()                        { return(scripts_dir);    };
   inline const char* get_callbacks_dir()                      { return(callbacks_dir);  };
-  inline const char* get_prefs_dir()                          { return(prefs_dir);      };
   inline const char* get_pcap_dir()                           { return(pcap_dir);       };
 #ifdef HAVE_TEST_MODE
   inline const char* get_test_script_path()                   { return(test_script_path); };
@@ -263,6 +275,8 @@ class Prefs {
   virtual void lua(lua_State* vm);
   void reloadPrefsFromRedis();
   void loadInstanceNameDefaults();
+  void resetDeferredInterfacesToRegister();
+  bool addDeferredInterfaceToRegister(const char *ifname);
   void registerNetworkInterfaces();
   void refreshHostsAlertsPrefs();
   void refreshDeviceProtocolsPolicyPref();
@@ -302,7 +316,9 @@ class Prefs {
   inline bool  is_zmq_encryption_enabled() { return(enable_zmq_encryption); };
   inline char* get_command_line()       { return(cli ? cli : (char*)""); };
   inline char* get_lan_interface()      { return(lan_interface ? lan_interface : (char*)""); };
+  inline char* get_wan_interface()      { return(wan_interface ? wan_interface : (char*)""); };
   inline void set_lan_interface(char *iface) { if(lan_interface) free(lan_interface); lan_interface = strdup(iface); };
+  inline void set_wan_interface(char *iface) { if(wan_interface) free(wan_interface); wan_interface = strdup(iface); };
   inline bool areMacNdpiStatsEnabled()  { return(enable_mac_ndpi_stats); };
   inline pcap_direction_t getCaptureDirection() { return(captureDirection); }
   inline void setCaptureDirection(pcap_direction_t dir) { captureDirection = dir; }
@@ -310,7 +326,9 @@ class Prefs {
   inline u_int32_t get_auth_session_duration()          { return(auth_session_duration);  };
   inline bool get_auth_session_midnight_expiration()    { return(auth_session_midnight_expiration);  };
   inline u_int32_t get_housekeeping_frequency()         { return(housekeeping_frequency); };
-  inline u_int32_t get_host_max_idle(bool localHost)    { return(localHost ? local_host_max_idle : non_local_host_max_idle);  };
+  inline u_int32_t get_host_max_idle(bool localHost) const { return(localHost ? local_host_max_idle : non_local_host_max_idle);  };
+  /* Maximum idleness for hosts with alerts engaged, that is, with ongoing issues. */
+  inline u_int32_t get_alerted_host_max_idle()       const { return(local_host_max_idle); /* Treat all hosts as local */         };
   inline u_int32_t get_local_host_cache_duration()      { return(local_host_cache_duration);   };
   inline u_int32_t get_pkt_ifaces_flow_max_idle()       { return(pkt_ifaces_flow_max_idle);    };
   inline bool  are_alerts_disabled()                    { return(disable_alerts);              };
@@ -350,17 +368,21 @@ class Prefs {
   inline u_int32_t get_safe_search_dns_ip()      { return(safe_search_dns_ip);                          };
   inline u_int32_t get_global_primary_dns_ip()   { return(global_primary_dns_ip);                       };
   inline u_int32_t get_global_secondary_dns_ip() { return(global_secondary_dns_ip);                     };
-  inline bool isGlobalDNSDefined()               { return(global_primary_dns_ip ? true : false);        };
-  inline HostMask getHostMask()                  { return(hostMask);                                    };
+  inline bool      isGlobalDNSDefined()          { return(global_primary_dns_ip ? true : false);        };
+  inline HostMask  getHostMask()                 { return(hostMask);                                    };
   inline u_int16_t get_auto_assigned_pool_id()   { return(auto_assigned_pool_id);                       };
   inline u_int16_t is_routing_mode()             { return(routing_mode_enabled);                        };
-  inline bool isGlobalDnsForgingEnabled()        { return(global_dns_forging_enabled);                  };
-  inline bool     reproduceOriginalSpeed()       { return(reproduce_at_original_speed);                 };
-  inline void     doReproduceOriginalSpeed()     { reproduce_at_original_speed = true;                  };
-  inline bool     purgeHostsFlowsOnPcapFiles()   { return(pcap_file_purge_hosts_flows);                 };
-  inline bool     isBehavourAnalysisEnabled()    { return(enable_behaviour_analysis);                   };
-  inline void     enableBehaviourAnalysis()      { enable_behaviour_analysis = true;                    };
-  
+#ifndef HAVE_NEDGE
+  inline bool      is_appliance()                { return(appliance);                                   };
+#endif
+  inline bool      isGlobalDnsForgingEnabled()   { return(global_dns_forging_enabled);                  };
+  inline bool      reproduceOriginalSpeed()      { return(reproduce_at_original_speed);                 };
+  inline void      doReproduceOriginalSpeed()    { reproduce_at_original_speed = true;                  };
+  inline bool      purgeHostsFlowsOnPcapFiles()  { return(pcap_file_purge_hosts_flows);                 };
+  inline bool      isBehavourAnalysisEnabled()   { return(enable_behaviour_analysis);                   };
+  inline void      enableBehaviourAnalysis()     { enable_behaviour_analysis = true;                    };
+  inline u_int64_t* getIEC104AllowedTypeIDs()    { return(iec104_allowed_typeids);                      };
+  void setIEC104AllowedTypeIDs(char *protos);
   void validate();
 };
 

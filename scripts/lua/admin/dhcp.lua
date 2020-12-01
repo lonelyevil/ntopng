@@ -7,6 +7,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
 require "lua_utils"
 local dhcp_utils = require("dhcp_utils")
+local ui_utils = require("ui_utils")
 local template = require("template_utils")
 
 -- Administrator check
@@ -34,10 +35,11 @@ print[[
 <H3>]] print(i18n("dhcp.dhcp")) print[[</H3>
 
 <form id="table-dhcp-form" method="post" data-toggle="validator">
-  <div id="table-dhcp"></div>
-  <button id="dhcp-save" class="btn btn-primary" style="float:right; margin-right:1em;" onclick="if($(this).hasClass('disabled')) return false;" type="submit">]] print(i18n("save_settings")) print[[</button>
+  <div class='table-responsive'><div id="table-dhcp"></div></div>
+  <div class='text-right'>
+    <button id="dhcp-save" class="btn btn-primary mb-1" onclick="if($(this).hasClass('disabled')) return false;" type="submit">]] print(i18n("save_settings")) print[[</button>
+  </div>
 </form>
-<br><br>
 
 <script>
   var range_to_delete;
@@ -81,7 +83,7 @@ print[[
           datatableForEachRow("#table-dhcp", function() {
             addInputFields($(this));
 
-            datatableAddDeleteButtonCallback.bind(this)(3, "range_to_delete = " + $(this).index() +"; $('#range-to-delete').html(rowIndexToRange('" + $(this).index() + "')); $('#delete_dhcp_range_dialog').modal('show');", "]] print(i18n('delete')) print[[");
+            datatableAddDeleteButtonCallback.bind(this)(3, "range_to_delete = " + $(this).index() +"; $('#range-to-delete').html(rowIndexToRange('" + $(this).index() + "')); $('#delete_dhcp_range_dialog').modal('show');", "<i class='fas fa-trash'></i>");
           });
         }
 
@@ -132,7 +134,7 @@ print[[
     var tr = $('<tr id="'+ newid +'"><td></td><td></td><td class="text-center"></td></tr>');
     addInputFields(tr);
 
-    datatableAddDeleteButtonCallback.bind(tr)(3, "datatableUndoAddRow('#" + newid + "', ']] print(i18n("host_pools.no_pools_defined")) print[[', '#addRangeBtn', 'onRowAddUndo')", "]] print(i18n('undo')) print[[");
+    datatableAddDeleteButtonCallback.bind(tr)(3, "datatableUndoAddRow('#" + newid + "', ']] print(i18n("host_pools.no_pools_defined")) print[[', '#addRangeBtn', 'onRowAddUndo')", "<i class='fas fa-undo'></i>");
     $("#table-dhcp table").append(tr);
     $("input:first", tr).focus();
 
@@ -188,7 +190,7 @@ print[[
     params.old_dhcp_ranges = old_dhcp_ranges.join(",");
     params.dhcp_ranges = dhcp_ranges.join(",");
     params.csrf = "]] print(ntop.getRandomCSRFValue()) print[[";
-    paramsToForm('<form method="post"></form>', params).appendTo('body').submit();
+    NtopUtils.paramsToForm('<form method="post"></form>', params).appendTo('body').submit();
   }
 
   aysHandleForm("#table-dhcp-form", {
@@ -217,9 +219,11 @@ print[[
     .validator(validator_options)
 </script>
 
-]] print(i18n("notes")) print[[
-  <ul>
-    <li>]] print(i18n("dhcp.dhcp_configuration_note")) print[[.</li>
-    <li>]] print(i18n("dhcp.dhcp_alert_note")) print[[.</li>
-  </ul>
 ]]
+
+local notes = {
+  {content = i18n("dhcp.dhcp_configuration_note")},
+  {content = i18n("dhcp.dhcp_alert_note")},
+}
+print("<div class='my-2'></div>")
+print(ui_utils.render_notes(notes))

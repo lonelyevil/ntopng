@@ -31,7 +31,8 @@ class ParsedFlow : public ParsedFlowCore, public ParsedeBPF {
   ndpi_serializer *additional_fields_tlv;
 
  public:
-  char *http_url, *http_site, *http_method;
+  char *http_url, *http_site;
+  ndpi_http_method http_method;
   char *dns_query;
   char *tls_server_name, *bittorrent_hash;
   char *ja3c_hash, *ja3s_hash;
@@ -41,7 +42,8 @@ class ParsedFlow : public ParsedFlowCore, public ParsedeBPF {
   u_int16_t http_ret_code;
   u_int16_t dns_query_type, dns_ret_code;
   custom_app_t custom_app;
-
+  ndpi_risk ndpi_flow_risk_bitmap;
+  
   ParsedFlow();
   ParsedFlow(const ParsedFlow &pf);
   inline void addAdditionalField(const char *key, json_object *field) {

@@ -34,7 +34,7 @@ FlowStats::~FlowStats() {
 
 /* *************************************** */
 
-void FlowStats::incStats(Bitmap status_bitmap, u_int8_t l4_protocol) {
+void FlowStats::incStats(Bitmap status_bitmap, u_int8_t l4_protocol, AlertLevel alert_level) {
   int i;
 
   for(i = 0; i < BITMAP_NUM_BITS; i++) {
@@ -43,6 +43,7 @@ void FlowStats::incStats(Bitmap status_bitmap, u_int8_t l4_protocol) {
   }
 
   protocols[l4_protocol]++;
+  alert_levels[alert_level]++;
 }
 
 /* *************************************** */
@@ -83,6 +84,36 @@ void FlowStats::lua(lua_State* vm) {
   lua_pushstring(vm, "l4_protocols");
   lua_insert(vm, -2);
   lua_settable(vm, -3);
+
+  /* Alert levels */
+  u_int32_t count_notice_or_lower = 0, count_warning = 0, count_error_or_higher = 0;
+
+  for(int i = 0; i < ALERT_LEVEL_MAX_LEVEL; i++) {
+    AlertLevel alert_level = (AlertLevel)i;
+
+    switch(Utils::mapAlertLevelToGroup(alert_level)) {
+    case alert_level_group_notice_or_lower:
+      count_notice_or_lower += alert_levels[alert_level];
+      break;
+    case alert_level_group_warning:
+      count_warning += alert_levels[alert_level];
+      break;
+    case alert_level_group_error_or_higher:
+      count_error_or_higher += alert_levels[alert_level];
+    default:
+      break;
+    }
+  }
+
+  lua_newtable(vm);
+
+  if(count_notice_or_lower > 0) lua_push_uint64_table_entry(vm, "notice_or_lower", count_notice_or_lower);
+  if(count_warning > 0)         lua_push_uint64_table_entry(vm, "warning",         count_warning);
+  if(count_error_or_higher > 0) lua_push_uint64_table_entry(vm, "error_or_higher", count_error_or_higher);
+
+  lua_pushstring(vm, "alert_levels");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
 }
 
 /* *************************************** */
@@ -90,6 +121,7 @@ void FlowStats::lua(lua_State* vm) {
 void FlowStats::resetStats() {
   memset(counters, 0, sizeof(counters));
   memset(protocols, 0, sizeof(protocols));
+  memset(alert_levels, 0, sizeof(alert_levels));
 }
 
 /* *************************************** */

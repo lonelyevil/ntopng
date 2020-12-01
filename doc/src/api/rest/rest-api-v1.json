@@ -1077,6 +1077,13 @@
 						"description": "Application protocol filter (optional)",
 						"required": false,
 						"type": "string"
+					},
+					{
+						"name": "verbose",
+						"in": "query",
+						"description": "Add more details including TCP stats (optional)",
+						"required": false,
+						"type": "boolean"
 					}
 				],
 				"responses": {
@@ -1552,6 +1559,58 @@
 				}
 			}
 		},
+		"lua/pro/rest/v1/change/snmp/device/interface/status.lua": {
+			"get": {
+				"tags": [
+					"SNMP"
+				],
+				"summary": "Change SNMP device interface status",
+				"description": "Change the status of an SNMP device in terface to up or down",
+				"operationId": "change_snmp_device_interface_status",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"name": "host",
+						"in": "query",
+						"description": "IP address of an SNMP device",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "snmp_admin_status",
+						"in": "query",
+						"description": "The new admin status, either 'up' or 'down'",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "snmp_port_idx",
+						"in": "query",
+						"description": "The index of the SNMP device interface",
+						"required": false,
+						"type": "string"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-4": {
+						"description": "INVALID_HOST"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-26": {
+						"description": "SNMP_DEVICE_INTERFACE_STATUS_CHANGE_FAILED"
+					}
+				}
+			}
+		},
 		"/lua/rest/v1/get/pcap/live_extraction.lua": {
 			"get": {
 				"tags": [
@@ -1955,6 +2014,146 @@
 				}
 			}
 		},
+		"/lua/rest/v1/edit/flow/pool.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Edit a flow pool",
+				"description": "Edit a flow pool (only recipients edit is allowed)",
+				"operationId": "edit_flow_pool",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32",
+						"pool_name": "string",
+						"pool_members": "string",
+						"recipients": "string",
+						"confset_id": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-14": {
+						"description": "EDIT_POOL_FAILED"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/edit/mac/pool.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Edit a MAC pool",
+				"description": "Edit a MAC pool (only recipients edit is allowed)",
+				"operationId": "edit_mac_pool",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32",
+						"pool_name": "string",
+						"pool_members": "string",
+						"recipients": "string",
+						"confset_id": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-14": {
+						"description": "EDIT_POOL_FAILED"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/edit/host_pool/pool.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Edit an host pool pool",
+				"description": "Edit an host pool pool (only recipients edit is allowed)",
+				"operationId": "edit_host_pool_pool",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32",
+						"pool_name": "string",
+						"pool_members": "string",
+						"recipients": "string",
+						"confset_id": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-14": {
+						"description": "EDIT_POOL_FAILED"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/edit/system/pool.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Edit a system pool",
+				"description": "Edit a system pool (only recipients edit is allowed)",
+				"operationId": "edit_system_pool",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32",
+						"pool_name": "string",
+						"pool_members": "string",
+						"recipients": "string",
+						"confset_id": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-14": {
+						"description": "EDIT_POOL_FAILED"
+					}
+				}
+			}
+		},
 		"/lua/rest/v1/delete/interface/pool.lua": {
 			"get": {
 				"tags": [
@@ -2110,6 +2309,66 @@
 				}
 			}
 		},
+		"/lua/rest/v1/delete/pools.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Delete all pools for any available pool type",
+				"description": "Delete all pools for any available pool type",
+				"operationId": "delete_pools",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/delete/recipients.lua": {
+			"get": {
+				"tags": [
+					"Notification Recipients"
+				],
+				"summary": "Delete all defined recipients and reset them to factory-defaults",
+				"description": "Delete all defined recipients and reset them to factory-defaults",
+				"operationId": "delete_recipients",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/delete/endpoints.lua": {
+			"get": {
+				"tags": [
+					"Notification Endpoints"
+				],
+				"summary": "Delete all defined notification endpoints and reset them to factory-defaults",
+				"description": "Delete all defined notification endpoints and reset them to factory-defaults",
+				"operationId": "delete_endpoints",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					}
+				}
+			}
+		},
 		"/lua/rest/v1/get/interface/pools.lua": {
 			"get": {
 				"tags": [
@@ -2185,6 +2444,53 @@
 				}
 			}
 		},
+		"/lua/rest/v1/get/pools.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Get all pools of any type",
+				"description": "Get all pools defined for any available pool type",
+				"operationId": "get_all_pools",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/recipient/pools.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Get all pools of any type for a given recipient id",
+				"description": "Get all pools defined for any available pool type for a given recipient id",
+				"operationId": "get_all_recipient_pools",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+					"name": "recipient_id",
+					"in": "query",
+					"description": "A recipient id",
+					"required": true,
+					"type": "int16"
+				}
+			],
+				"responses": {
+					"0": {
+						"description": "OK"
+					}
+				}
+			}
+		},
 		"/lua/pro/rest/v1/get/snmp/device/pool.lua": {
 			"get": {
 				"tags": [
@@ -2218,6 +2524,106 @@
 				"summary": "Get one or all active monitoring pools",
 				"description": "Get one or all active monitoring pools",
 				"operationId": "get_active_monitoring_pools",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-16": {
+						"description": "POOL_NOT_FOUND"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/get/flow/pools.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Get one or all flow pools",
+				"description": "Get one or all flow pools",
+				"operationId": "get_flow_pools",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-16": {
+						"description": "POOL_NOT_FOUND"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/get/mac/pools.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Get one or all MAC pools",
+				"description": "Get one or all MAC pools",
+				"operationId": "get_mac_pools",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-16": {
+						"description": "POOL_NOT_FOUND"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/get/host_pool/pools.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Get one or all host pool pools",
+				"description": "Get one or all host pool pools",
+				"operationId": "get_host_pool_pools",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [{
+						"pool": "int32"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-16": {
+						"description": "POOL_NOT_FOUND"
+					}
+				}
+			}
+		},
+		"/lua/rest/v1/get/system/pools.lua": {
+			"get": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Get one or all system pools",
+				"description": "Get one or all system pools",
+				"operationId": "get_system_pools",
 				"produces": [
 					"application/json"
 				],
@@ -2318,7 +2724,469 @@
 				}
 			}
 		},
-		"lua/pro/rest/v1/add/ntopng/user.lua": {
+		"lua/rest/v1/export/all/config.lua": {
+			"post": {
+				"tags": [
+					"All"
+				],
+				"summary": "Export all configurations as a JSON file",
+				"description": "Export all configurations including Pools, Active Monitoring, Notifications (Endpoints and Recipients), User Scripts, SNMP devices",
+				"operationId": "export_all_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+					{
+						"name": "download",
+						"in": "query",
+						"description": "Download as file (no REST envelope)",
+						"required": false,
+						"type": "boolean"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/export/active_monitoring/config.lua": {
+			"post": {
+				"tags": [
+					"Active Monitoring"
+				],
+				"summary": "Export the active monitoring configuration as a JSON file",
+				"description": "Export the active monitoring configuration",
+				"operationId": "export_active_monitoring_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [	{
+						"name": "download",
+						"in": "query",
+						"description": "Download as file (no REST envelope)",
+						"required": false,
+						"type": "boolean"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/export/notifications/config.lua": {
+			"post": {
+				"tags": [
+					"Notifications"
+				],
+				"summary": "Export the notifications configuration as a JSON file",
+				"description": "Export the configuration for endpoints and recipients",
+				"operationId": "export_notifications_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [	{
+						"name": "download",
+						"in": "query",
+						"description": "Download as file (no REST envelope)",
+						"required": false,
+						"type": "boolean"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/export/pool/config.lua": {
+			"post": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Export the pools configuration as a JSON file",
+				"description": "Export the configuration of all pools and dependencies (notifications, SNMP, active monitoring, user scripts",
+				"operationId": "export_pool_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [	{
+						"name": "download",
+						"in": "query",
+						"description": "Download as file (no REST envelope)",
+						"required": false,
+						"type": "boolean"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/export/scripts/config.lua": {
+			"post": {
+				"tags": [
+					""
+				],
+				"summary": "Export the User Scripts configuration as a JSON file",
+				"description": "Export the configuration for all user scripts",
+				"operationId": "export_scripts_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [	{
+						"name": "download",
+						"in": "query",
+						"description": "Download as file (no REST envelope)",
+						"required": false,
+						"type": "boolean"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/export/snmp/config.lua": {
+			"post": {
+				"tags": [
+					""
+				],
+				"summary": "Export the SNMP configuration as a JSON file",
+				"description": "Export the configuration for the SNMP devices",
+				"operationId": "export_snmp_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [	{
+						"name": "download",
+						"in": "query",
+						"description": "Download as file (no REST envelope)",
+						"required": false,
+						"type": "boolean"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/import/all/config.lua": {
+			"post": {
+				"tags": [
+					"All"
+				],
+				"summary": "Import all configurations providing a JSON file",
+				"description": "Import all configurations including Pools, Active Monitoring, Notifications (Endpoints and Recipients), User Scripts, SNMP devices",
+				"operationId": "import_all_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-27": {
+						"description": "CONFIGURATION_FILE_MISMATCH"
+					},
+					"-28": {
+						"description": "PARTIAL_IMPORT"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/import/active_monitoring/config.lua": {
+			"post": {
+				"tags": [
+					"Active Monitoring"
+				],
+				"summary": "Import the active monitoring configuration providing a JSON file",
+				"description": "Import the active monitoring configuration",
+				"operationId": "import_active_monitoring_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-27": {
+						"description": "CONFIGURATION_FILE_MISMATCH"
+					},
+					"-28": {
+						"description": "PARTIAL_IMPORT"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/import/notifications/config.lua": {
+			"post": {
+				"tags": [
+					"Notifications"
+				],
+				"summary": "Import the notifications configuration providing a JSON file",
+				"description": "Import the configuration for endpoints and recipients",
+				"operationId": "import_notifications_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-27": {
+						"description": "CONFIGURATION_FILE_MISMATCH"
+					},
+					"-28": {
+						"description": "PARTIAL_IMPORT"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/import/pool/config.lua": {
+			"post": {
+				"tags": [
+					"Pools"
+				],
+				"summary": "Import the pools configuration providing a JSON file",
+				"description": "Import the configuration of all pools and dependencies (notifications, SNMP, active monitoring, user scripts",
+				"operationId": "import_pool_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-27": {
+						"description": "CONFIGURATION_FILE_MISMATCH"
+					},
+					"-28": {
+						"description": "PARTIAL_IMPORT"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/import/scripts/config.lua": {
+			"post": {
+				"tags": [
+					""
+				],
+				"summary": "Import the User Scripts configuration providing a JSON file",
+				"description": "Import the configuration for all user scripts",
+				"operationId": "import_scripts_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-27": {
+						"description": "CONFIGURATION_FILE_MISMATCH"
+					},
+					"-28": {
+						"description": "PARTIAL_IMPORT"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/import/snmp/config.lua": {
+			"post": {
+				"tags": [
+					""
+				],
+				"summary": "Import the SNMP configuration providing a JSON file",
+				"description": "Import the configuration for the SNMP devices",
+				"operationId": "import_snmp_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					},
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-27": {
+						"description": "CONFIGURATION_FILE_MISMATCH"
+					},
+					"-28": {
+						"description": "PARTIAL_IMPORT"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/reset/all/config.lua": {
+			"post": {
+				"tags": [
+					"All"
+				],
+				"summary": "Reset all configurations",
+				"description": "Reset all configurations",
+				"operationId": "reset_all_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+		"/lua/pro/rest/v1/check/infrastructure/config.lua": {
+			"post": {
+				"tags": [
+					"All"
+				],
+				"summary": "Test an infrastructure configuration",
+				"description": "Uses an url and token to connect to the REST API of an ntopng in the infrastructure",
+				"operationId": "check_infrastructure_config",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+					{
+						"name": "url",
+						"in": "query",
+						"description": "The URL of the ntopng in the infrastructure",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "token",
+						"in": "query",
+						"description": "The REST API Token for the authentication",
+						"required": true,
+						"type": "string"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-42": {
+						"description": "INFRASTRUCTURE_INSTANCE_ALREADY_EXISTING"
+					},
+					"-43": {
+						"description": "INFRASTRUCTURE_INSTANCE_CHECK_FAILED"
+					},
+					"-44": {
+						"description": "INFRASTRUCTURE_INSTANCE_CHECK_NOT_FOUND"
+					},
+					"-45": {
+						"description": "INFRASTRUCTURE_INSTANCE_CHECK_INVALID_RESPONSE"
+					},
+					"-46": {
+						"description": "INFRASTRUCTURE_INSTANCE_CHECK_AUTH_FAILED"
+					}
+				}
+			}
+		},
+	        "lua/rest/v1/get/ntopng/users.lua": {
+			"post": {
+				"tags": [
+					"Users"
+				],
+				"summary": "Read all configured ntopng users",
+				"description": "Read all configured ntopng users",
+				"operationId": "getall_ntopng_users",
+				"produces": [
+					"application/json"
+				],
+				"parameters": [
+				],
+				"responses": {
+					"0": {
+						"description": "OK"
+					},
+					"-3": {
+						"description": "NOT_GRANTED"
+					}
+				}
+			}
+		},
+	 	"lua/rest/v1/add/ntopng/user.lua": {
 			"post": {
 				"tags": [
 					"Users"
@@ -2395,6 +3263,9 @@
 					}
 				],
 				"responses": {
+					"0": {
+						"description": "OK"
+					},
 					"-3": {
 						"description": "NOT_GRANTED"
 					},
@@ -2406,11 +3277,14 @@
 					},
 					"-20": {
 						"description": "ADD_USER_FAILED"
+					},
+					"-23": {
+						"description": "USER_ALREADY_EXISTING"
 					}
 				}
 			}
 		},
-		"lua/pro/rest/v1/delete/ntopng/user.lua": {
+		"lua/rest/v1/delete/ntopng/user.lua": {
 			"post": {
 				"tags": [
 					"Users"
@@ -2443,14 +3317,85 @@
 				}
 			}
 		},
-		"lua/pro/rest/v1/get/ntopng/session.lua": {
+		"lua/rest/v1/edit/ntopng/user.lua": {
 			"post": {
 				"tags": [
 					"Users"
 				],
-				"summary": "Get ntopng user session Cookie",
+				"summary": "Edit a ntopng user",
+				"description": "Edit an existing ntopng user",
+				"operationId": "edit_ntopng_user",
+				"produces": [
+					"application/json"
+				],
+			    "parameters": [
+				{
+						"name": "username",
+						"in": "formData",
+						"description": "Username",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "user_role",
+						"in": "formData",
+						"description": "User role (unprivileged / administrator)",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "allowed_networks",
+						"in": "formData",
+						"description": "Allowed networks (e.g. 0.0.0.0/0,::/0)",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "allowed_interface",
+						"in": "formData",
+						"description": "Allowed interfaces (empty for all)",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "user_language",
+						"in": "formData",
+						"description": "Language (en, it, de, jp, pt, cz)",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "allow_pcap_download",
+						"in": "formData",
+						"description": "Allow PCAPs download (1 to allow)",
+						"required": true,
+						"type": "string"
+					}
+				],
+				"responses": {
+					"-5": {
+						"description": "INVALID_ARGUMENTS"
+					},
+					"-21": {
+						"description": "DELETE_USER_FAILED"
+					},
+					"-23": {
+						"description": "USER_DOES_NOT_EXIST"
+					},
+					"-24": {
+						"description": "EDIT_USER_FAILED"
+					}
+				}
+			}
+		},
+		"lua/rest/v1/create/ntopng/session.lua": {
+			"post": {
+				"tags": [
+					"Users"
+				],
+				"summary": "Create a new ntopng user session Cookie",
 				"description": "Generate a new user session to be used as session Cookie",
-				"operationId": "get_ntopng_session",
+				"operationId": "create_ntopng_session",
 				"produces": [
 					"application/json"
 				],
@@ -2461,6 +3406,13 @@
 						"description": "Username",
 						"required": true,
 						"type": "string"
+					},
+					{
+						"name": "auth_session_duration",
+						"in": "formData",
+						"description": "Session duration (seconds). Default: 0 (no expiration).",
+						"required": false,
+						"type": "integer"
 					}
 				],
 				"responses": {

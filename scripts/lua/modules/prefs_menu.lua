@@ -160,12 +160,6 @@ local menu_subpages = {
     }, max_num_bytes_per_tiny_flow = {
       title       = i18n("prefs.max_num_bytes_per_tiny_flow_title"),
       description = i18n("prefs.max_num_bytes_per_tiny_flow_description"),
-    }, toggle_aggregated_flows_export_limit = {
-      title       = i18n("prefs.toggle_aggregated_flows_export_limit_title"),
-      description = i18n("prefs.toggle_aggregated_flows_export_limit_description"),
-    }, max_num_aggregated_flows_per_export = {
-      title       = i18n("prefs.max_num_aggregated_flows_per_export_title"),
-      description = i18n("prefs.max_num_aggregated_flows_per_export_description"),
     },
   }}, {id="on_disk_ts",    label=i18n("prefs.timeseries"),       advanced=false, pro_only=false,  hidden=false, entries={
     toggle_interface_traffic_rrd_creation = {
@@ -237,12 +231,6 @@ local menu_subpages = {
     disable_alerts_generation = {
       title       = i18n("prefs.disable_alerts_generation_title"),
       description = i18n("prefs.disable_alerts_generation_description"),
-    }, toggle_remote_to_remote_alerts = {
-      title       = i18n("prefs.toggle_remote_to_remote_alerts_title"),
-      description = i18n("prefs.toggle_remote_to_remote_alerts_description"),
-    }, toggle_ip_reassignment_alerts = {
-       title       = i18n("prefs.toggle_ip_reassignment_title"),
-       description = i18n("prefs.toggle_ip_reassignment_description"),
     }, max_num_alerts_per_entity = {
       title       = i18n("prefs.max_num_alerts_per_entity_title"),
       description = i18n("prefs.max_num_alerts_per_entity_description"),
@@ -253,21 +241,7 @@ local menu_subpages = {
       title       = i18n("prefs.toggle_mysql_check_open_files_limit_title"),
       description = i18n("prefs.toggle_mysql_check_open_files_limit_description"),
       hidden      = (prefs.is_dump_flows_to_mysql_enabled == false),
-    }, toggle_device_first_seen_alert = {
-      title       =  i18n("prefs.toggle_device_first_seen_alert_title"),
-      description = i18n("prefs.toggle_device_first_seen_alert_description"),
-    }, toggle_device_activation_alert = {
-      title       = i18n("prefs.toggle_device_activation_alert_title"),
-      description = i18n("prefs.toggle_device_activation_alert_description"),
-    }, toggle_pool_activation_alert = {
-      title       = i18n("prefs.toggle_pool_activation_alert_title"),
-      description = i18n("prefs.toggle_pool_activation_alert_description"),
-    }, toggle_quota_exceeded_alert = {
-      title       = i18n("prefs.toggle_quota_exceed_alert_title"),
-      description = i18n("prefs.toggle_quota_exceed_alert_description"),
-      hidden      = not ntop.isPro(),
     }
-    
   }}, {id="protocols",     label=i18n("prefs.protocols"),            advanced=false, pro_only=false,  hidden=false, entries={
     toggle_top_sites = {
       title       = i18n("prefs.toggle_top_sites_title"),

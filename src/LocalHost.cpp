@@ -46,10 +46,6 @@ LocalHost::LocalHost(NetworkInterface *_iface, char *ipAddress,
 LocalHost::~LocalHost() {
   if(initial_ts_point) delete(initial_ts_point);
   freeLocalHostData();
-#ifdef NTOPNG_PRO
-  if(ba)
-    delete ba;
-#endif  
 }
 
 /* *************************************** */
@@ -115,7 +111,7 @@ void LocalHost::initialize() {
 
   /* Clone the initial point. It will be written to the timeseries DB to
    * address the first point problem (https://github.com/ntop/ntopng/issues/2184). */
-  initial_ts_point = new LocalHostStats(*(LocalHostStats *)stats);
+  initial_ts_point = new (std::nothrow) LocalHostStats(*(LocalHostStats *)stats);
   initialization_time = time(NULL);
 
   char *strIP = ip.print(buf, sizeof(buf));
@@ -136,13 +132,6 @@ void LocalHost::initialize() {
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s is %s [%p]",
 			       ip.print(buf, sizeof(buf)),
 			       isSystemHost() ? "systemHost" : "", this);
-#endif
-
-#ifdef NTOPNG_PRO  
-  if(ntop->getPrefs()->isBehavourAnalysisEnabled())
-    ba = new HostBehaviourAnalysis;
-  else
-    ba = NULL;
 #endif
 }
 
@@ -271,17 +260,6 @@ void LocalHost::lua(lua_State* vm, AddressTree *ptree,
 
 /* *************************************** */
 
-#ifdef NTOPNG_PRO
-void LocalHost::luaHostBehaviour(lua_State* vm) {
-  if(ba)
-    ba->lua(iface, vm);
-  else
-    lua_pushnil(vm);
-}
-#endif
-
-/* *************************************** */
-
 // TODO move into nDPI
 void LocalHost::inlineSetOSDetail(const char *_os_detail) {
   if((mac == NULL)
@@ -324,7 +302,7 @@ void LocalHost::lua_get_timeseries(lua_State* vm) {
   lua_push_uint64_table_entry(vm, "active_flows.as_server", getNumIncomingFlows());
   lua_push_uint64_table_entry(vm, "contacts.as_client", getNumActiveContactsAsClient());
   lua_push_uint64_table_entry(vm, "contacts.as_server", getNumActiveContactsAsServer());
-  lua_push_uint64_table_entry(vm, "engaged_alerts", getNumTriggeredAlerts());
+  lua_push_uint64_table_entry(vm, "engaged_alerts", getNumEngagedAlerts());
 
   lua_pushstring(vm, "ts_point");
   lua_insert(vm, -2);
@@ -357,6 +335,9 @@ void LocalHost::lua_get_timeseries(lua_State* vm) {
 void LocalHost::freeLocalHostData() {
   /* Better not to use a virtual function as it is called in the destructor as well */
   if(os_detail) { free(os_detail); os_detail = NULL; }
+  
+  for(std::unordered_map<u_int32_t, DoHDoTStats*>::iterator it = doh_dot_map.begin(); it != doh_dot_map.end(); ++it)
+    delete it->second;
 }
 
 /* *************************************** */
@@ -423,3 +404,52 @@ void LocalHost::reloadPrefs() {
 }
 
 /* *************************************** */
+
+void LocalHost::incDohDoTUses(Host *host) {
+  u_int32_t key = host->get_ip()->key() + host->get_vlan_id();
+  std::unordered_map<u_int32_t, DoHDoTStats*>::iterator it;
+
+  m.lock(__FILE__, __LINE__);
+  it = doh_dot_map.find(key);
+
+  if(it == doh_dot_map.end()) {
+    if(doh_dot_map.size() > 8 /* Max # entries */) return;
+    
+    doh_dot_map[key] = new DoHDoTStats(*(host->get_ip()), host->get_vlan_id());
+  }
+
+  doh_dot_map[key]->incUses();
+
+  m.unlock(__FILE__, __LINE__);
+}
+
+/* *************************************** */
+
+void LocalHost::luaDoHDot(lua_State *vm) {
+  u_int8_t i = 0;
+  
+  if(doh_dot_map.size() == 0) return;
+  
+  lua_newtable(vm);
+
+  m.lock(__FILE__, __LINE__);
+  
+  for(std::unordered_map<u_int32_t, DoHDoTStats*>::iterator it = doh_dot_map.begin();
+      it != doh_dot_map.end(); ++it) {
+    lua_newtable(vm);
+    
+    it->second->lua(vm);
+    
+    lua_pushinteger(vm, i);
+    lua_insert(vm, -2);
+    lua_settable(vm, -3);
+    i++;
+  }
+  
+  m.unlock(__FILE__, __LINE__);
+  
+  lua_pushstring(vm, "DoH_DoT");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+}
+

@@ -249,7 +249,7 @@ void SNMP::send_snmpv1v2c_request(char *agent_host, char *community,
 				  u_int version,
 				  char *_oid[SNMP_MAX_NUM_OIDS],
 				  bool _batch_mode) {
-  int rc, pdu_type;
+  int rc, pdu_type = SNMP_MSG_GET;
   struct snmp_pdu *pdu;
   SNMPSession *snmpSession;
   bool initSession = false;
@@ -423,7 +423,6 @@ void SNMP::send_snmp_request(char *agent_host,
     } else {
       /* SNMP v3 */
       snmpSession->session.version  = SNMP_VERSION_3;
-      snmpSession->session.peername = NULL;
 
       if(!strcasecmp(level, "noAuthNoPriv")) {
 	snmpSession->session.securityLevel = SNMP_SEC_LEVEL_NOAUTH;
@@ -441,8 +440,6 @@ void SNMP::send_snmp_request(char *agent_host,
 	}
 
 	if((!strcasecmp(level, "authNoPriv")) || (!strcasecmp(level, "authPriv"))) {
-	  snmpSession->session.securityLevel = SNMP_SEC_LEVEL_AUTHNOPRIV;
-
 	  if(!strcasecmp(auth_protocol, "md5")) {
 	    snmpSession->session.securityAuthProto = usmHMACMD5AuthProtocol;
 	    snmpSession->session.securityAuthProtoLen = sizeof(usmHMACMD5AuthProtocol)/sizeof(oid);
@@ -466,8 +463,7 @@ void SNMP::send_snmp_request(char *agent_host,
 	  }
 
 	  if(!strcasecmp(level, "authPriv")) {
-	    /* TODO */
-	    //privacy_passphrase;
+	    snmpSession->session.securityLevel = SNMP_SEC_LEVEL_AUTHPRIV;
 
 	    if(!strcasecmp(privacy_protocol, "DES")) {
 	      snmpSession->session.securityPrivProto = snmp_duplicate_objid(usmDESPrivProtocol, USM_PRIV_PROTO_DES_LEN);
@@ -486,7 +482,8 @@ void SNMP::send_snmp_request(char *agent_host,
 	      ntop->getTrace()->traceEvent(TRACE_WARNING, "SNMP PDU security privacy error");
 	      return;
 	    }
-	  }
+	  } else
+	    snmpSession->session.securityLevel = SNMP_SEC_LEVEL_AUTHNOPRIV;
 	}
       }
     }
@@ -515,6 +512,10 @@ void SNMP::send_snmp_request(char *agent_host,
       ntop->getTrace()->traceEvent(TRACE_WARNING, "SNMP PDU create error");
       return;
     }
+    break;
+  default:
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "Unknown SNMP PDU type %u", pduType);
+    pdu_type = SNMP_MSG_GET;
     break;
   }
 

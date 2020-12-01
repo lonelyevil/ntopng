@@ -258,6 +258,9 @@ bool ThreadedActivity::isQueueable(NetworkInterface *iface) const {
 /* ******************************************* */
 
 bool ThreadedActivity::isDeadlineApproaching(time_t deadline) const {
+  if (terminating)
+    return true;
+
   /*
     The deadline is approaching if the current time is closer than deadline_approaching_secs
     with reference to the deadline passed as parameter
@@ -488,7 +491,7 @@ void ThreadedActivity::uSecDiffPeriodicActivityBody() {
 
     /* We must guarantee that the "now" time, passed to the script,
      * it's monotonically increasing. */
-    while(end.tv_sec < (begin.tv_sec + periodicity)) {
+    while((u_int32_t)end.tv_sec < (u_int32_t)(begin.tv_sec + periodicity)) {
       /* Align to the start of the second to avoid crossing second bounds.
        * Alignment only happens if the script hasn't already crossed
        * its periodicity bound, otherwise the while is just skipped. */

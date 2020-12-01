@@ -560,7 +560,7 @@ field / field alias with a comma.
 .. code:: bash
 
    curl --silent --insecure -u "admin:admin" \
-     -d '{"ifid": 0, "host": "10.222.222.119", "field_alias": "ip,bytes.sent=tdb,packets.sent"}' \
+     -H "Content-Type: application/json" -d '{"ifid": 0, "host": "10.222.222.119", "field_alias": "ip,bytes.sent=tdb,packets.sent"}' \
      "https://localhost:3001/lua/rest/v1/get/host/custom_data.lua"
 
 Response:
@@ -585,7 +585,7 @@ monitoring interface (ifid): 0.
 .. code:: bash
 
    curl --silent --insecure -u "admin:admin" \
-     -d '{"ifid": 0, "field_alias": "ip,bytes.sent=tdb,packets.sent=tdp"}' \
+     -H "Content-Type: application/json" -d '{"ifid": 0, "field_alias": "ip,bytes.sent=tdb,packets.sent=tdp"}' \
      "https://localhost:3001/lua/rest/v1/get/host/custom_data.lua"
 
 Response:
@@ -626,7 +626,7 @@ Get all host data for all hosts on monitoring interface (ifid): 0.
 .. code:: bash
 
    curl --silent --insecure -u "admin:admin" \
-     -d '{"ifid": 0"}' \
+     -H "Content-Type: application/json" -d '{"ifid": 0"}' \
      "https://localhost:3001/lua/rest/v1/get/host/custom_data.lua"
 
 Response:
@@ -1439,6 +1439,13 @@ Get Members of an Host Pool
 
     curl -s -u admin:admin  -H "Content-Type: application/json" -d '{"pool": 2}' http://localhost:3000/lua/rest/v1/get/host/pool/members.lua
 
+Get All Pools of Any type
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   curl -s -u admin:admin  -H "Content-Type: application/json" curl http://devel:3000/lua/rest/v1/get/pools.lua
+
 
 SNMP
 ----
@@ -1507,4 +1514,72 @@ Response:
 		  ]
 	  }
    }
+
+Change the Status of an SNMP Device Interface
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+*curl*
+
+.. code:: bash
+
+   curl -s -u admin:admin  -H "Content-Type: application/json" -u admin:admin -d '{"host": "192.168.2.169", "snmp_admin_status": "up", "snmp_port_idx": 26}' http://127.0.0.1:3000/lua/pro/rest/v1/change/snmp/device/interface/status.lua
+
+Response:
+
+.. code:: json
+
+   {"rc":0,
+   "rc_str_hr":"Success",
+   "rsp":[],
+   "rc_str":"OK"
+   }
+
+
+*curl*
+
+.. code:: bash
+
+   curl -s -u admin:admin  -H "Content-Type: application/json" -u admin:admin -d '{"host": "192.168.2.169", "snmp_admin_status": "down", "snmp_port_idx": 26}' http://127.0.0.1:3000/lua/pro/rest/v1/change/snmp/device/interface/status.lua
+
+Response:
+
+.. code:: json
+
+   {
+     "rc":0,
+     "rc_str_hr":"Success",
+     "rsp":[],
+     "rc_str":"OK"
+   }
+
+Misc
+----
+
+Create a Session Cookie
+~~~~~~~~~~~~~~~~~~~~~~~
+
+*curl*
+
+.. code:: bash
+
+   curl -s -u admin:admin  -H "Content-Type: application/json" -d '{"username": "admin"}' "http://192.168.1.1:3000/lua/rest/v1/create/ntopng/session.lua"
+
+Response:
+
+.. code:: json
+
+   {
+   	"rc":0,
+   	"rc_str":"OK",
+   	"rc_str_hr":"Success",
+   	"rsp":{
+   		"session":"3ff5cf2aba7168e9ef955c20291a9ad4"
+   	}
+   }
+
+Using the session:
+
+.. code:: bash
+
+   curl --cookie "user=admin; session=3ff5cf2aba7168e9ef955c20291a9ad4" "http://192.168.1.1:3000/lua/rest/get/interface/data.lua?ifid=1"
 

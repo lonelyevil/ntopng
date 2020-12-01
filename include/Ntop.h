@@ -41,6 +41,8 @@ class Ntop {
 #ifndef WIN32
   int startupLockFile;
 #endif
+  pthread_t purgeLoop;    /* Loop which iterates on active interfaces to delete idle hash table entries */
+  bool purgeLoop_started; /* Flag that indicates whether the purgeLoop has been started */
   bool ndpiReloadInProgress;
   Bloom *resolvedHostsBloom; /* Used by all redis class instances */
   AddressTree local_interface_addresses;
@@ -82,10 +84,15 @@ class Ntop {
   DeviceProtocolBitmask deviceProtocolPresets[device_max_type];
   cpu_load_stats cpu_stats;
   float cpu_load;
-  bool is_started, plugins0_active, can_send_icmp, privileges_dropped;
+  bool plugins0_active, can_send_icmp, privileges_dropped;
   std::set<std::string> *new_malicious_ja3, *malicious_ja3, *malicious_ja3_shadow;
-  FifoStringsQueue *sqlite_alerts_queue, *alerts_notifications_queue;
   FifoSerializerQueue *internal_alerts_queue;
+  Recipients recipients; /* Handle notification recipients */
+  
+  /* Local network address list */
+  char *addressString[CONST_MAX_NUM_NETWORKS];
+  AddressTree tree;
+
 #ifndef WIN32
   ContinuousPing *cping;
 #endif
@@ -93,6 +100,10 @@ class Ntop {
 #ifdef __linux__
   int inotify_fd;
 #endif
+
+  /* For local network */
+  inline int16_t findAddress(int family, void *addr, u_int8_t *network_mask_bits = NULL);
+  bool addAddress(char *_net);
 
   void loadLocalInterfaceAddress();
   void initAllowedProtocolPresets();
@@ -103,6 +114,7 @@ class Ntop {
   bool getUserPasswordHashLocal(const char * const user, char *password_hash) const;
   bool checkUserPasswordLocal(const char * const user, const char * const password, char *group) const;
   bool checkUserPassword(const char * const user, const char * const password, char *group, bool *localuser) const;
+  bool startPurgeLoop();
   
  public:
   /**
@@ -390,6 +402,7 @@ class Ntop {
   bool checkUserInterfaces(const char * const user)             const;
   bool resetUserPassword(char *username, char *old_password, char *new_password);
   bool mustChangePassword(const char *user);
+  bool changeUserFullName(const char * const username, const char * const full_name) const;
   bool changeUserRole(char *username, char *user_role) const;
   bool changeAllowedNets(char *username, char *allowed_nets)     const;
   bool changeAllowedIfname(char *username, char *allowed_ifname) const;
@@ -401,13 +414,12 @@ class Ntop {
   bool addUser(char *username, char *full_name, char *password, char *host_role,
 	       char *allowed_networks, char *allowed_ifname, char *host_pool_id,
 	       char *language, bool allow_pcap_download);
-  bool addUserLifetime(const char * const username, u_int32_t lifetime_secs); /* Captive portal users may expire */
-  bool clearUserLifetime(const char * const username);
+  bool addUserAPIToken(const char * const username, const char *api_token);
   bool isCaptivePortalUser(const char * const username);
   bool deleteUser(char *username);
   bool getUserHostPool(char *username, u_int16_t *host_pool_id);
   bool getUserAllowedIfname(const char * const username, char *buf, size_t buflen) const;
-  bool hasUserLimitedLifetime(const char * const username, int32_t *lifetime_secs);
+  bool getUserAPIToken(const char * const username, char *buf, size_t buflen) const;
   void setWorkingDir(char *dir);
   void fixPath(char *str, bool replaceDots = true);
   void removeTrailingSlash(char *str);
@@ -417,14 +429,10 @@ class Ntop {
   void shutdownAll();
   void runHousekeepingTasks();
   void runShutdownTasks();
-  inline bool isStarted() { return(is_started); }
   bool isLocalInterfaceAddress(int family, void *addr)       { return(local_interface_addresses.findAddress(family, addr) == -1 ? false : true);    };
-  inline u_int8_t getLocalNetworkId(const char *network_name) { return(address->get_local_network_id(network_name)); }
-  inline const char* getLocalNetworkName(int16_t local_network_id) {
-    return(address->get_local_network((u_int8_t)local_network_id));
-  };
+  
   void getLocalNetworkIp(int16_t local_network_id, IpAddress **network_ip, u_int8_t *network_prefix);
-  inline void addLocalNetwork(const char *network)           { address->setLocalNetwork((char*)network); }
+  void addLocalNetwork(const char *network);
   void createExportInterface();
   void resetNetworkInterfaces();
   void initElasticSearch();
@@ -441,7 +449,6 @@ class Ntop {
 
   inline NtopPro* getPro()              { return((NtopPro*)pro); };
 
-  inline u_int8_t getNumLocalNetworks()       { return(address->getNumLocalNetworks()); };
   void loadTrackers();
   bool isATrackerHost(char *host);
   bool isExistingInterface(const char * const name) const;
@@ -450,8 +457,7 @@ class Ntop {
   inline NetworkInterface* getSystemInterface() { return(system_interface); }
 #ifdef NTOPNG_PRO
   bool addToNotifiedInformativeCaptivePortal(u_int32_t client_ip);
-  bool addIPToLRUMatches(u_int32_t client_ip, u_int16_t user_pool_id,
-			 char *label, int32_t lifetime_secs, char *ifname);
+  bool addIPToLRUMatches(u_int32_t client_ip, u_int16_t user_pool_id, char *label, char *ifname);
 #endif /* NTOPNG_PRO */
   
   DeviceProtocolBitmask* getDeviceAllowedProtocols(DeviceType t) { return(&deviceProtocolPresets[t]); }
@@ -462,9 +468,13 @@ class Ntop {
   inline void setLastInterfacenDPIReload(time_t now)      { last_ndpi_reload = now;   }
   inline bool needsnDPICleanup()                          { return(ndpi_cleanup_needed); }
   inline void setnDPICleanupNeeded(bool needed)           { ndpi_cleanup_needed = needed; }
-  inline FifoStringsQueue* getSqliteAlertsQueue()         { return(sqlite_alerts_queue);         }
-  inline FifoStringsQueue* getAlertsNotificationsQueue()  { return(alerts_notifications_queue);  }
   inline FifoSerializerQueue* getInternalAlertsQueue()    { return(internal_alerts_queue);  }
+  void lua_alert_queues_stats(lua_State* vm);
+  bool  recipient_enqueue(u_int16_t recipient_id, RecipientNotificationPriority prio, const char * const notification);
+  char* recipient_dequeue(u_int16_t recipient_id, RecipientNotificationPriority prio);
+  void recipient_stats(u_int16_t recipient_id, lua_State* vm);
+  void recipient_delete(u_int16_t recipient_id);
+  void recipient_register(u_int16_t recipient_id);
 
   void sendNetworkInterfacesTermination();
   inline time_t getLastStatsReset() { return(last_stats_reset); }
@@ -493,6 +503,18 @@ class Ntop {
 
   void getUserGroupLocal(const char * const user, char *group) const;
   bool existsUserLocal(const char * const user) { char val[64]; return getUserPasswordHashLocal(user, val); }
+  void purgeLoopBody();
+
+  /* Local network address list methods */
+  inline u_int8_t getNumLocalNetworks()       { return tree.getNumAddresses();    };
+  inline const char* getLocalNetworkName(int16_t local_network_id) {
+    return(((u_int8_t)local_network_id < tree.getNumAddresses()) ? addressString[(u_int8_t)local_network_id] : NULL);
+  };
+  
+  u_int8_t getLocalNetworkId(const char *network_name);
+  
+  //void getAddresses(lua_State* vm)            { return(tree.getAddresses(vm));                               };
+  
 };
 
 extern Ntop *ntop;

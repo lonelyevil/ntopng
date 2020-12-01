@@ -9,9 +9,9 @@ require "lua_utils"
 require "db_utils"
 require "historical_utils"
 require "rrd_paths"
+
 local dkjson = require("dkjson")
 local host_pools = require "host_pools"
-local host_pools_instance = host_pools:create()
 local top_talkers_utils = require "top_talkers_utils"
 local os_utils = require "os_utils"
 local graph_common = require "graph_common"
@@ -205,11 +205,13 @@ end
 --! @param other_label optional name for the "other" part of the bar. If nil, it will not be shown.
 --! @param formatter an optional item value formatter
 --! @param css_class an optional css class to apply to the progress div
+--! @skip_zero_values don't display values containing only zero
 --! @return html for the bar
-function graph_utils.stackedProgressBars(total, bars, other_label, formatter, css_class)
+function graph_utils.stackedProgressBars(total, bars, other_label, formatter, css_class, skip_zero_values)
    local res = {}
    local cumulative = 0
    local cumulative_perc = 0
+   local skip_zero_values = skip_zero_values or false
    formatter = formatter or (function(x) return x end)
 
    -- The bars
@@ -255,6 +257,9 @@ function graph_utils.stackedProgressBars(total, bars, other_label, formatter, cs
 
    num = 0
    for _, bar in ipairs(legend_items) do
+
+      if skip_zero_values and bar.value == 0 then goto continue end
+
       res[#res + 1] = [[<span>]]
       if(num > 0) then res[#res + 1] = [[<br>]] end
       if bar.link ~= nil then res[#res + 1] = [[<a href="]] .. bar.link .. [[">]] end
@@ -262,6 +267,8 @@ function graph_utils.stackedProgressBars(total, bars, other_label, formatter, cs
       if bar.link ~= nil then res[#res + 1] = [[</a>]] end
       res[#res + 1] = [[<span> ]] .. bar.title .. " (".. formatter(bar.value) ..")</span></span>"
       num = num + 1
+
+      ::continue::
    end
 
    res[#res + 1] = [[<span style="margin-left: 0"><span></span><span>&nbsp;&nbsp;-&nbsp;&nbsp;]] .. i18n("total") .. ": ".. formatter(total) .."</span></span>"
@@ -305,7 +312,9 @@ end
 -- ########################################################
 
 function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selectedEpoch, options)
+   local page_utils =require("page_utils") -- Do not require at the top as it could conflict with plugins_utils.getMenuEntries
    local debug_rrd = false
+   local is_system_interface = page_utils.is_system_view()
    options = options or {}
 
    if((selectedEpoch == nil) or (selectedEpoch == "")) then
@@ -382,32 +391,32 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
    if(data) then
       print [[
 
-<style>
-#chart_container {
-display: inline-block;
-font-family: Arial, Helvetica, sans-serif;
-}
-#chart {
-   float: left;
-}
-#legend {
-   float: left;
-   margin-left: 15px;
-   color: black;
-   background: white;
-}
-#y_axis {
-   float: left;
-   width: 40px;
-}
-
-</style>
+      <style>
+         #chart_container {
+            display: inline-block;
+            font-family: Arial, Helvetica, sans-serif;
+         }
+         #chart {
+            float: left;
+         }
+         #legend {
+            float: left;
+            margin-left: 15px;
+            color: black;
+            background: white;
+         }
+         #y_axis {
+            float: left;
+            width: 40px;
+         }
+   </style>
 
 <div>
 
-<div class="container-fluid">
-  <ul class="nav nav-tabs" role="tablist" id="historical-tabs-container">
-    <li class="nav-item active"> <a class="nav-link active" href="#historical-tab-chart" role="tab" data-toggle="tab"> Chart </a> </li>
+   <div class='card'>
+      <div class='card-header'>
+         <ul class="nav nav-tabs card-header-tabs" role="tablist" id="historical-tabs-container">
+            <li class="nav-item active"> <a class="nav-link active" href="#historical-tab-chart" role="tab" data-toggle="tab"> Chart </a> </li>
 ]]
 
 local show_historical_tabs = ntop.getPrefs().is_dump_flows_to_mysql_enabled and options.show_historical
@@ -418,12 +427,11 @@ end
 
 print[[
 </ul>
-
-
+</div>
+<div class='card-body'>
   <div class="tab-content">
     <div class="tab-pane active in" id="historical-tab-chart">
-
-<br>
+    <div class="table-responsive">
 <table border=0>
 <tr><td valign="top">
 ]]
@@ -451,7 +459,7 @@ if(options.timeseries) then
    ]]
 end -- options.timeseries
 
-print('&nbsp;Timeframe:  <div class="btn-group btn-group-toggle" data-toggle="buttons" id="graph_zoom">\n')
+print('<span class="mx-1">Timeframe:</span><div class="btn-group btn-group-toggle" data-toggle="buttons" id="graph_zoom">\n')
 
 for k,v in ipairs(graph_common.zoom_vals) do
    -- display 1 minute button only for networks and interface stats
@@ -495,10 +503,6 @@ print [[
 });
 </script>
 
-<br />
-<p>
-
-
 <div id="legend"></div>
 <div id="chart_legend"></div>
 <div id="chart" style="margin-right: 50px; margin-left: 10px; display: table-cell"></div>
@@ -518,32 +522,33 @@ print [[
 local format_as_bps = true
 local format_as_bytes = false
 local formatter_fctn
+
 local label = data.series[1].label
 
 if label == "load_percentage" then
-   formatter_fctn = "ffloat"
+   formatter_fctn = "NtopUtils.ffloat"
    format_as_bps = false
 elseif label == "resident_bytes" then
-   formatter_fctn = "bytesToSize"
+   formatter_fctn = "NtopUtils.bytesToSize"
    format_as_bytes = true
 elseif string.contains(label, "pct") then
-   formatter_fctn = "fpercent"
+   formatter_fctn = "NtopUtils.fpercent"
    format_as_bps = false
    format_as_bytes = false
 elseif schema == "process:num_alerts" then
-   formatter_fctn = "falerts"
+   formatter_fctn = "NtopUtils.falerts"
    format_as_bps = false
    format_as_bytes = false
 elseif label:contains("millis") or label:contains("_ms") then
-   formatter_fctn = "fmillis"
+   formatter_fctn = "NtopUtils.fmillis"
    format_as_bytes = false
    format_as_bps = false
 elseif string.contains(label, "packets") or string.contains(label, "flows") or label:starts("num_") or label:contains("alerts") then
-   formatter_fctn = "fint"
+   formatter_fctn = "NtopUtils.fint"
    format_as_bytes = false
    format_as_bps = false
 else
-   formatter_fctn = "fbits"
+   formatter_fctn = (is_system_interface and "NtopUtils.fnone" or "NtopUtils.fbits")
 end
 
 print [[
@@ -576,6 +581,13 @@ if(stats ~= nil) then
      print('   <tr><th>Last</th><td>' .. os.date("%x %X", lastval_time) .. '</td><td>' .. formatValue(round(lastval), 1) .. '</td></tr>\n')
      print('   <tr><th>Average</th><td colspan=2>' .. formatValue(round(stats.average, 2)) .. '</td></tr>\n')
      print('   <tr><th>95th <A HREF=https://en.wikipedia.org/wiki/Percentile>Percentile</A></th><td colspan=2>' .. formatValue(round(stats["95th_percentile"], 2)) .. '</td></tr>\n')
+   elseif is_system_interface then
+      if(minval_time > 0) then print('   <tr><th>Min</th><td>' .. os.date("%x %X", minval_time) .. '</td><td>' .. (formatValue(round(stats["min_val"], 2)) or "") .. '</td></tr>\n') end
+      if(maxval_time > 0) then print('   <tr><th>Max</th><td>' .. os.date("%x %X", maxval_time) .. '</td><td>' .. (formatValue(round(stats["max_val"], 2)) or "") .. '</td></tr>\n') end
+      print('   <tr><th>Last</th><td>' .. os.date("%x %X", lastval_time) .. '</td><td>' .. formatValue(round(lastval, 2)) .. '</td></tr>\n')
+      print('   <tr><th>Average</th><td colspan=2>' ..formatValue(round(stats["average"], 2)).. '</td></tr>\n')
+      print('   <tr><th>95th <A HREF=https://en.wikipedia.org/wiki/Percentile>Percentile</A></th><td colspan=2>' ..(formatValue(round(stats["95th_percentile"], 2)) or '') .. '</td></tr>\n')
+      print('   <tr><th>Total Traffic</th><td colspan=2>' .. (stats.total or '') .. '</td></tr>\n')
    else
      if(minval_time > 0) then print('   <tr><th>Min</th><td>' .. os.date("%x %X", minval_time) .. '</td><td>' .. bitsToSize((stats.min_val*8) or "") .. '</td></tr>\n') end
      if(maxval_time > 0) then print('   <tr><th>Max</th><td>' .. os.date("%x %X", maxval_time) .. '</td><td>' .. bitsToSize((stats.max_val*8) or "") .. '</td></tr>\n') end
@@ -584,11 +596,13 @@ if(stats ~= nil) then
      print('   <tr><th>95th <A HREF=https://en.wikipedia.org/wiki/Percentile>Percentile</A></th><td colspan=2>' .. bitsToSize(stats["95th_percentile"]*8) .. '</td></tr>\n')
      print('   <tr><th>Total Traffic</th><td colspan=2>' .. bytesToSize(stats.total) .. '</td></tr>\n')
   end
+
 end
 
-print('   <tr><th>Selection Time</th><td colspan=2><div id=when></div></td></tr>\n')
+print('   <tr><th>Time</th><td colspan=2><div id=when></div></td></tr>\n')
 
-if top_talkers_utils.areTopEnabled(ifid) then
+-- hide Minute Interface Top Talker if we are in system interface
+if top_talkers_utils.areTopEnabled(ifid) and not is_system_interface then
    print('   <tr><th>Minute<br>Interface<br>Top Talkers</th><td colspan=2><div id=talkers></div></td></tr>\n')
 end
 
@@ -597,7 +611,7 @@ print [[
    </table>
 ]]
 
-print[[</div></td></tr></table>
+print[[</div></td></tr></table></div>
 
     </div> <!-- closes div id "historical-tab-chart "-->
 ]]
@@ -619,8 +633,13 @@ end
 
 print[[
   </div> <!-- closes div class "tab-content" -->
-</div> <!-- closes div class "container-fluid" -->
+  </div>
+</div> <!-- closes div class "card" -->]]
 
+local ui_utils = require("ui_utils")
+print(ui_utils.render_notes(options.notes))
+
+print[[
 <script>
 
 var palette = new Rickshaw.Color.Palette();
@@ -659,14 +678,6 @@ graph.render();
 
 var chart_legend = document.querySelector('#chart_legend');
 
-
-function fdate(when) {
-      var epoch = when*1000;
-      var d = new Date(epoch);
-
-      return(d);
-}
-
 var Hover = Rickshaw.Class.create(Rickshaw.Graph.HoverDetail, {
     graph: graph,
     xFormatter: function(x) { return new Date( x * 1000 ); },
@@ -678,7 +689,7 @@ var Hover = Rickshaw.Class.create(Rickshaw.Graph.HoverDetail, {
 
 		if(point.value.y === null) return;
 
-		var formattedXValue = fdate(point.value.x); // point.formattedXValue;
+		var formattedXValue = NtopUtils.fdate(point.value.x); // point.formattedXValue;
 		var formattedYValue = ]]
 	  print(formatter_fctn)
 	  print [[(point.value.y); // point.formattedYValue;
@@ -699,21 +710,21 @@ $.ajax({
 		   var info = jQuery.parseJSON(content);
 		   $.each(info, function(i, n) {
 		     if (n.length > 0)
-		       infoHTML += "<li>"+capitaliseFirstLetter(i)+" [Avg Traffic/sec]<ol>";
+		       infoHTML += "<li>"+NtopUtils.capitaliseFirstLetter(i)+" [Avg Traffic/sec]<ol>";
 		     var items = 0;
 		     var other_traffic = 0;
 		     $.each(n, function(j, m) {
 		       if((items < 3) && (m.address != "Other")) {
-			 infoHTML += "<li><a href='host_details.lua?host="+m.address+"'>"+abbreviateString(m.label ? m.label : m.address,24);
+			 infoHTML += "<li><a href='host_details.lua?host="+m.address+"'>"+NtopUtils.abbreviateString(m.label ? m.label : m.address,24);
 		       infoHTML += "</a>";
 		       if (m.vlan != "0") infoHTML += " ("+m.vlanm+")";
-		       infoHTML += " ("+fbits((m.value*8)/60)+")</li>";
+		       infoHTML += " ("+NtopUtils.fbits((m.value*8)/60)+")</li>";
 			 items++;
 		       } else
 			 other_traffic += m.value;
 		     });
 		     if (other_traffic > 0)
-			 infoHTML += "<li>Other ("+fbits((other_traffic*8)/60)+")</li>";
+			 infoHTML += "<li>Other ("+NtopUtils.fbits((other_traffic*8)/60)+")</li>";
 		     if (n.length > 0)
 		       infoHTML += "</ol></li>";
 		   });
@@ -899,6 +910,7 @@ end
 -- #################################################
 
 function graph_utils.poolDropdown(ifId, pool_id, exclude)
+   local host_pools_instance = host_pools:create()
    pool_id = tostring(pool_id)
 
    local output = {}
@@ -919,7 +931,7 @@ function graph_utils.poolDropdown(ifId, pool_id, exclude)
 	 if not ntop.isEnterpriseM() then
 	    local n_members = table.len(pool["members"])
 
-	    if n_members >= host_pools_instance.LIMITED_NUMBER_POOL_MEMBERS then
+	    if n_members >= host_pools.LIMITED_NUMBER_POOL_MEMBERS then
 	       limit_reached = true
 	    end
 	 end
@@ -951,11 +963,9 @@ function graph_utils.printPoolChangeDropdown(ifId, pool_id, have_nedge)
 
    output[#output + 1] = [[
             </select>
-        <a href="]] .. ntop.getHttpPrefix() .. edit_pools_link .. [["><i class="fas fa-edit" aria-hidden="true" title="]]
-      ..i18n(ternary(have_nedge, "nedge.edit_users", "pools.edit_pools"))
-      .. [["></i> ]]
-      .. i18n(ternary(have_nedge, "nedge.edit_users", "pools.edit_pools"))
-      .. [[</a>
+        <a class='ml-1' href="]] .. ntop.getHttpPrefix() .. edit_pools_link .. [["><i class="fas fa-edit" aria-hidden="true" title="]]
+      ..(have_nedge and i18n("edit") or '')
+      .. [["></i></a>
    </tr>]]
 
    print(table.concat(output, ''))
@@ -1018,11 +1028,8 @@ end
 
 local default_timeseries = {
    {schema="iface:flows",                 label=i18n("graphs.active_flows")},
-   {schema="iface:new_flows",             label=i18n("graphs.new_flows"), value_formatter = {"fflows", "formatFlows"}},
-   {schema="custom:flow_misbehaving_vs_alerted", label=i18n("graphs.misbehaving_vs_alerted"),
-    value_formatter = {"formatFlows", "formatFlows"},
-    skip = hasAllowedNetworksSet(),
-    metrics_labels = {i18n("flow_details.mibehaving_flows"), i18n("flow_details.alerted_flows")}},
+   {schema="iface:new_flows",             label=i18n("graphs.new_flows"), value_formatter = {"NtopUtils.fflows", "NtopUtils.formatFlows"}},
+   {schema="iface:alerted_flows",         label=i18n("graphs.total_alerted_flows")},
    {schema="iface:hosts",                 label=i18n("graphs.active_hosts")},
    {schema="iface:alerts_stats",          label=i18n("show_alerts.iface_engaged_dropped_alerts"), skip=hasAllowedNetworksSet()},
    {schema="custom:flows_vs_local_hosts", label=i18n("graphs.flows_vs_local_hosts"), check={"iface:flows", "iface:local_hosts"}, step=60},
@@ -1048,9 +1055,9 @@ local default_timeseries = {
 
    {schema="iface:dumped_flows",          label=i18n("graphs.dumped_flows"), metrics_labels = {i18n("graphs.dumped_flows"), i18n("graphs.dropped_flows")} },
    {schema="iface:zmq_recv_flows",        label=i18n("graphs.zmq_received_flows"), nedge_exclude=1},
-   {schema="custom:zmq_msg_rcvd_vs_drops",label=i18n("graphs.zmq_msg_rcvd_vs_drops"), check={"iface:zmq_rcvd_msgs", "iface:zmq_msg_drops"}, metrics_labels = {i18n("if_stats_overview.zmq_message_rcvd"), i18n("if_stats_overview.zmq_message_drops")}, value_formatter = {"fmsgs", "formatMessages"}},
-   {schema="iface:zmq_flow_coll_drops",   label=i18n("graphs.zmq_flow_coll_drops"), nedge_exclude=1, value_formatter = {"fflows", "formatFlows"}},
-   {schema="iface:zmq_flow_coll_udp_drops", label=i18n("graphs.zmq_flow_coll_udp_drops"), nedge_exclude=1, value_formatter = {"fpackets", "formatPackets"}},
+   {schema="custom:zmq_msg_rcvd_vs_drops",label=i18n("graphs.zmq_msg_rcvd_vs_drops"), check={"iface:zmq_rcvd_msgs", "iface:zmq_msg_drops"}, metrics_labels = {i18n("if_stats_overview.zmq_message_rcvd"), i18n("if_stats_overview.zmq_message_drops")}, value_formatter = {"NtopUtils.fmsgs", "NtopUtils.formatMessages"}},
+   {schema="iface:zmq_flow_coll_drops",   label=i18n("graphs.zmq_flow_coll_drops"), nedge_exclude=1, value_formatter = {"NtopUtils.fflows", "NtopUtils.formatFlows"}},
+   {schema="iface:zmq_flow_coll_udp_drops", label=i18n("graphs.zmq_flow_coll_udp_drops"), nedge_exclude=1, value_formatter = {"NtopUtils.fpackets", "NtopUtils.formatPackets"}},
    {separator=1, nedge_exclude=1, label=i18n("tcp_stats")},
    {schema="iface:tcp_lost",              label=i18n("graphs.tcp_packets_lost"), nedge_exclude=1},
    {schema="iface:tcp_out_of_order",      label=i18n("graphs.tcp_packets_ooo"), nedge_exclude=1},

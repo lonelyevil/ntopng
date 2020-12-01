@@ -6,7 +6,6 @@ local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 -- io.write ("Session:".._SESSION["session"].."\n")
 require "lua_utils"
-
 local page_utils = require("page_utils")
 local is_system_interface = page_utils.is_system_view()
 
@@ -17,17 +16,26 @@ if (is_system_interface) then
   return
 end
 
-if(ntop.isnEdge()) then
-  package.path = dirs.installdir .. "/pro/scripts/lua/nedge/modules/?.lua;" .. package.path
-  local nf_config = require("nf_config"):readable()
+if ntop.isnEdge() or ntop.isAppliance() then
+  local sys_config
 
-  if nf_config.isFirstStart() then
-    print(ntop.httpRedirect(ntop.getHttpPrefix().."lua/pro/nedge/system_setup/interfaces.lua"))
+  if ntop.isnEdge() then
+    package.path = dirs.installdir .. "/pro/scripts/lua/nedge/modules/system_config/?.lua;" .. package.path
+    sys_config = require("nf_config"):create()
+  else -- ntop.isAppliance()
+    package.path = dirs.installdir .. "/scripts/lua/modules/system_config/?.lua;" .. package.path
+    sys_config = require("appliance_config"):create()
+  end
+
+  if sys_config.isFirstStart() then
+    print(ntop.httpRedirect(ntop.getHttpPrefix().."lua/system_setup_ui/interfaces.lua"))
     return
   end
 end
 
-if(ntop.isPro()) then
+local mode  = _GET["dashboard_mode"]
+
+if(ntop.isPro() and (mode ~= "community")) then
    if interface.isPcapDumpInterface() == false then
       print(ntop.httpRedirect(ntop.getHttpPrefix().."/lua/pro/dashboard.lua"))
       return
@@ -35,6 +43,12 @@ if(ntop.isPro()) then
       -- it doesn't make sense to show the dashboard for pcap files...
       print(ntop.httpRedirect(ntop.getHttpPrefix().."/lua/if_stats.lua?ifid="..getInterfaceId(ifname)))
       return
+   end
+else
+   if(mode) then
+      mode = "&dashboard_mode="..mode
+   else
+      mode = "&dashboard_mode=community"
    end
 end
 
@@ -68,12 +82,13 @@ if (refresh == '') then refresh = 5000 end
 --
 
 print([[
-  <div class='container-fluid'>
     <div class='row'>
       <div class='col-12'>
 ]])
 
-page = _GET["page"]
+local page = _GET["page"]
+page = (page_utils.is_valid_page(page, {'TopFlowTalkers', 'TopHosts', 'TopPorts', 'TopApplications'}) and page or nil)
+
 if(page == nil) then
    if(not(is_loopback)) then
       page = "TopFlowTalkers"
@@ -83,32 +98,33 @@ if(page == nil) then
 end
 
 if((ifstats ~= nil) and (ifstats.stats.packets > 0)) then
-   local nav_url = ntop.getHttpPrefix()..'/?ifid='..interface.getId()
-   local title = i18n("index_page.dashboard")
+
+  local nav_url = ntop.getHttpPrefix()..'/?ifid='..interface.getId()..mode
+  local title = i18n("index_page.dashboard")
 
    page_utils.print_navbar(title, nav_url,
-			   {
-			      {
-				 active = page == "TopFlowTalkers" or not page,
-				 page_name = "TopFlowTalkers",
-				 label = i18n("talkers"),
-			      },
-			      {
-				 active = page == "TopHosts",
-				 page_name = "TopHosts",
-				 label = i18n("index_page.hosts"),
-			      },
-			      {
-				 active = page == "TopPorts",
-				 page_name = "TopPorts",
-				 label = i18n("ports"),
-			      },
-			      {
-				 active = page == "TopApplications",
-				 page_name = "TopApplications",
-				 label = i18n("index_page.applications"),
-			      },
-			   }
+      {
+        {
+          active = page == "TopFlowTalkers" or not page,
+          page_name = "TopFlowTalkers",
+          label = i18n("talkers"),
+        },
+        {
+          active = page == "TopHosts",
+          page_name = "TopHosts",
+          label = i18n("index_page.hosts"),
+        },
+        {
+          active = page == "TopPorts",
+          page_name = "TopPorts",
+          label = i18n("ports"),
+        },
+        {
+          active = page == "TopApplications",
+          page_name = "TopApplications",
+          label = i18n("index_page.applications"),
+        },
+      }
    )
 
    if(page == "TopFlowTalkers") then
@@ -213,7 +229,6 @@ else
 end
 
 print([[
-  </div>
   </div>
   </div>
 ]])

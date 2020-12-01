@@ -2,8 +2,11 @@
 -- (C) 2019-20 - ntop.org
 --
 
-local plugins_utils = {}
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/notifications/?.lua;" .. package.path
 
+
+local plugins_utils = {}
 local os_utils = require("os_utils")
 local persistence = require("persistence")
 local file_utils = require("file_utils")
@@ -62,99 +65,121 @@ end
 
 -- ##############################################
 
--- @brief Lists the all available plugins
--- @returns a sorted table with plugins as values.
--- @notes Plugins must be loaded based according to the sort order to honor dependencies
-function plugins_utils.listPlugins()
-  local plugins = {}
-  local rv = {}
-  local source_dirs = {{"community", plugins_utils.COMMUNITY_SOURCE_DIR}}
-  local plugins_with_deps = {}
+-- @brief Recursively search for plugins starting from `source_dir`
+-- @param edition A string indicating the plugin edition. One of `community`, `pro`, `enterprise_m` or `enterprise_l`
+-- @param source_dir The path of the directory to start the plugin search from
+-- @param max_recursion Maximum number of recursive calls to this function
+-- @param plugins A lua table with all the plugins found
+-- @param plugins_with_deps A lua table with all the plugins found which have other plugins as dependencies
+local function recursivePluginsSearch(edition, source_dir, max_recursion, plugins, plugins_with_deps)
+   -- Prepend the current `source_dir` to the Lua path - this is necessary for doing the require
+   lua_path_utils.package_path_prepend(source_dir)
 
-  if ntop.isPro() then
-    source_dirs[#source_dirs + 1] = {"pro", plugins_utils.PRO_SOURCE_DIR}
-
-    if ntop.isEnterpriseM() then
-      source_dirs[#source_dirs + 1] = {"enterprise_m", plugins_utils.ENTERPRISE_M_SOURCE_DIR}
-    end
-
-    if ntop.isEnterpriseL() then
-      source_dirs[#source_dirs + 1] = {"enterprise_l", plugins_utils.ENTERPRISE_L_SOURCE_DIR}
-    end
-  end
-
-  for _, source_conf in ipairs(source_dirs) do
-    local edition = source_conf[1]
-    local source_dir = source_conf[2]
-
-    for plugin_name in pairs(ntop.readdir(source_dir)) do
+   for plugin_name in pairs(ntop.readdir(source_dir)) do
       local plugin_dir = os_utils.fixPath(source_dir .. "/" .. plugin_name)
       local plugin_info = os_utils.fixPath(plugin_dir .. "/manifest.lua")
 
       if ntop.exists(plugin_info) then
-        local metadata = dofile(plugin_info)
-        local mandatory_fields = {"title", "description", "author"}
+	 -- If there's a manifest, we are in a plugin directory
+	 local req_name = string.format("%s.manifest", plugin_name)
+	 local metadata = require(req_name)
+	 local mandatory_fields = {"title", "description", "author"}
 
-        if(metadata == nil) then
-          traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Could not load manifest.lua in '%s'", plugin_name))
-          goto continue
-        end
+	 if not metadata then
+	    traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Could not load manifest.lua in '%s'", plugin_name))
+	    goto continue
+	 end
 
-        for _, field in pairs(mandatory_fields) do
-          if(metadata[field] == nil) then
-            traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing mandatory field '%s' in manifest.lua of '%s'", field, plugin_name))
-            goto continue
-          end
-        end
+	 for _, field in pairs(mandatory_fields) do
+	    if not metadata[field] then
+	       traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing mandatory field '%s' in manifest.lua of '%s'", field, plugin_name))
+	       goto continue
+	    end
+	 end
 
-        if(metadata.disabled) then
-          -- The plugin is disabled, skip it
-          goto continue
-        end
+	 if metadata.disabled then
+	    -- The plugin is disabled, skip it
+	    goto continue
+	 end
 
-        -- Augument information
-        metadata.path = plugin_dir
-        metadata.key = plugin_name
-        metadata.edition = edition
+	 -- Augument information
+	 metadata.path = plugin_dir
+	 metadata.key = plugin_name
+	 metadata.edition = edition
 
-        if not table.empty(metadata.dependencies) then
-          plugins_with_deps[plugin_name] = metadata
-        else
-          plugins[plugin_name] = metadata
-          rv[#rv + 1] = metadata
-        end
-      else
-        traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing manifest.lua in '%s'", plugin_name))
+	 if not table.empty(metadata.dependencies) then
+	    plugins_with_deps[plugin_name] = metadata
+	 else
+	    plugins[plugin_name] = metadata
+	 end
+      elseif ntop.isdir(plugin_dir) and max_recursion > 0 then
+	 -- Recursively see if this is a directory containing other plugins
+	 recursivePluginsSearch(edition, plugin_dir, max_recursion - 1, plugins, plugins_with_deps)
       end
 
       ::continue::
-    end
-  end
+   end
+end
 
-  -- Check basic dependencies.
-  -- No recursion is supported (e.g. dependency on a plugin which has dependencies itself)
-  for plugin_name, metadata in pairs(plugins_with_deps) do
-    local satisfied = true
+-- ##############################################
 
-    for _, dep_name in pairs(metadata.dependencies) do
-      if not plugins[dep_name] then
-        satisfied = false
+-- @brief Lists the all available plugins
+-- @returns a sorted table with plugins as values.
+-- @notes Plugins must be loaded based according to the sort order to honor dependencies
+local function listPlugins()
+   local plugins = {}
+   local plugins_with_deps = {}
+   local rv = {}
+   local source_dirs = {{"community", plugins_utils.COMMUNITY_SOURCE_DIR}}
 
-        if do_trace then
-          io.write(string.format("Skipping plugin '%s' with unmet depedendency ('%s')\n", plugin_name, dep_name))
-        end
+   if ntop.isPro() then
+      source_dirs[#source_dirs + 1] = {"pro", plugins_utils.PRO_SOURCE_DIR}
 
-        break
+      if ntop.isEnterpriseM() then
+	 source_dirs[#source_dirs + 1] = {"enterprise_m", plugins_utils.ENTERPRISE_M_SOURCE_DIR}
       end
-    end
 
-    if satisfied then
-      plugins[plugin_name] = metadata
-      rv[#rv + 1] = metadata
-    end
-  end
+      if ntop.isEnterpriseL() then
+	 source_dirs[#source_dirs + 1] = {"enterprise_l", plugins_utils.ENTERPRISE_L_SOURCE_DIR}
+      end
+   end
 
-  return(rv)
+   for _, source_conf in ipairs(source_dirs) do
+      local edition = source_conf[1]
+      local source_dir = source_conf[2]
+
+      recursivePluginsSearch(edition, source_dir, 3, plugins, plugins_with_deps)
+   end
+
+   -- Add plugins without dependencies to the result
+   for _, plugin_metadata in pairs(plugins) do
+      rv[#rv + 1] = plugin_metadata
+   end
+
+   -- Check basic dependencies.
+   -- No recursion is supported (e.g. dependency on a plugin which has dependencies itself)
+   for plugin_name, metadata in pairs(plugins_with_deps) do
+      local satisfied = true
+
+      for _, dep_name in pairs(metadata.dependencies) do
+	 if not plugins[dep_name] then
+	    satisfied = false
+
+	    if do_trace then
+	       io.write(string.format("Skipping plugin '%s' with unmet depedendency ('%s')\n", plugin_name, dep_name))
+	    end
+
+	    break
+	 end
+      end
+
+      if satisfied then
+	 plugins[plugin_name] = metadata
+	 rv[#rv + 1] = metadata
+      end
+   end
+
+   return(rv)
 end
 
 -- ##############################################
@@ -205,6 +230,16 @@ end
 
 -- ##############################################
 
+--@brief Load a plugin file and possibly executes an onLoad method
+--@return The loaded plugin file
+local function load_plugin_file(full_path)
+   local res = dofile(full_path)
+
+   return res
+end
+
+-- ##############################################
+
 -- NOTE: cannot save the definitions to a single file via the persistance
 -- module because they may contain functions (e.g. in the i18n_description)
 local function load_definitions(defs_dir, runtime_path)
@@ -212,13 +247,14 @@ local function load_definitions(defs_dir, runtime_path)
       if fname:ends(".lua") then
 	 local mod_fname = string.sub(fname, 1, string.len(fname) - 4)
 	 local full_path = os_utils.fixPath(defs_dir .. "/" .. fname)
-	 local def_script = dofile(full_path)
+	 local def_script = load_plugin_file(full_path)
 	 -- Verify the definitions
 	 if(type(def_script) ~= "table") then
 	    traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Error loading definition from %s", full_path))
 	    return(false)
 	 end
 
+	 -- tprint({"copying", fname, defs_dir, runtime_path})
 	 file_utils.copy_file(fname, defs_dir, runtime_path)
       end
    end
@@ -228,8 +264,31 @@ end
 
 -- ##############################################
 
-local function load_plugin_definitions(plugin, alert_definitions, status_definitions)
+local function load_plugin_alert_definitions(plugin)
+  -- Reset all the possibly existing (and loaded) definitions
+  -- as new alert definitions are being loaded
+  local alert_consts = require "alert_consts"
+  alert_consts.resetDefinitions()
+
+  -- Now that existing alert definitions are clean, new alert definitions
+  -- can safely be loaded
   local alert_definitions = RUNTIME_PATHS.alert_definitions
+
+  return load_definitions(os_utils.fixPath(plugin.path .. "/alert_definitions"), alert_definitions)
+end
+
+-- ##############################################
+
+local function load_plugin_flow_status_definitions(plugin)
+  -- Reset all the possibly existing (and loaded) flow statuses.
+  -- This is necessary to forcefully re-execute `require`s during
+  -- the load of new flows statuses which is being performed
+  local flow_consts = require "flow_consts"
+  flow_consts.resetDefinitions()
+
+
+  -- Now that existing flow statuses have been cleaned, it is
+  -- safe to load new ones
   local status_definitions
 
   if(plugin.edition == "community") then
@@ -240,8 +299,7 @@ local function load_plugin_definitions(plugin, alert_definitions, status_definit
     status_definitions = RUNTIME_PATHS.pro_status_definitions
   end
 
-  return(load_definitions(os_utils.fixPath(plugin.path .. "/alert_definitions"), alert_definitions)
-	    and load_definitions(os_utils.fixPath(plugin.path .. "/status_definitions"), status_definitions))
+  return load_definitions(os_utils.fixPath(plugin.path .. "/status_definitions"), status_definitions)
 end
 
 -- ##############################################
@@ -333,7 +391,7 @@ local function load_plugin_user_scripts(paths_to_plugin, plugin)
 
   for runtime_path, source_path in pairs(paths_map) do
     -- Ensure that the script does not have errors
-    local res = dofile(runtime_path)
+    local res = load_plugin_file(runtime_path)
 
     if(res == nil) then
       traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Skipping bad user script '%s' in plugin '%s'", source_path, plugin.key))
@@ -351,49 +409,57 @@ end
 
 -- ##############################################
 
-local function load_plugin_alert_endpoints(endpoints_prefs_entries, plugin)
+local function load_plugin_alert_endpoints(plugin)
    local endpoints_path = os_utils.fixPath(plugin.path .. "/alert_endpoints")
+   local endpoints_template_path = os_utils.fixPath(plugin.path .. "/templates")
 
    if not ntop.exists(endpoints_path) then
       -- No alert endpoints for this plugin
       return true
    end
 
-   local prefs_entries_fname = os_utils.fixPath(endpoints_path .. "/prefs_entries.lua")
-   if not ntop.exists(prefs_entries_fname) then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing required 'prefs_entries.lua' in %s", plugin.key))
-      return false
-   end
-
-   local prefs_entries = dofile(prefs_entries_fname)
-   if prefs_entries then
-      if not prefs_entries.entries then
-	 traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing field 'entries' in %s (prefs_entries.lua)", plugin.key))
-	 return false
-      end
-      if not prefs_entries.endpoint_key then
-	 traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing field 'endpoint_key' in %s (prefs_entries.lua)", plugin.key))
-	 return false
-      end
-      if endpoints_prefs_entries[prefs_entries.endpoint_key] then
-	 traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Endpoint key '%s' already defined, error in %s (prefs_entries.lua)", prefs_entries.endpoint_key, plugin.key))
-	 return false
-      end
-
-      endpoints_prefs_entries[prefs_entries.endpoint_key] = prefs_entries
-   end
-
    for fname in pairs(ntop.readdir(endpoints_path)) do
-      if((fname ~= "prefs_entries.lua") and ends(fname, ".lua")) then
+      if fname:ends(".lua") then
 	 -- Execute the alert endpoint and call its method onLoad, if present
 	 local fname_path = os_utils.fixPath(endpoints_path .. "/" .. fname)
-	 local endpoint = dofile(fname_path)
-	 if endpoint and endpoint.onLoad then
-	    endpoint.onLoad()
+	 local endpoint = load_plugin_file(fname_path)
+
+	 if not endpoint then
+	    traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Unable to load endpoint '%s'", fname))
+	    return false
 	 end
-	 
+
+	 -- Check for configuration templates existence
+	 if endpoint.endpoint_template and endpoint.endpoint_template.template_name then
+	    -- Stop if the template doesn't exist
+	    if not ntop.exists(os_utils.fixPath(endpoints_template_path.."/"..endpoint.endpoint_template.template_name)) then
+	       traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing conf template '%s' in '%s' for endpoint '%s'",
+								    endpoint.endpoint_template.template_name,
+								    endpoints_template_path,
+								    fname))
+	       return false
+	    end
+	 end
+
+	 -- Check for recipient templates existence
+	 if endpoint.recipient_template and endpoint.recipient_template.template_name then
+	    -- Return if the recipient template doesn't exist
+	    if not ntop.exists(os_utils.fixPath(endpoints_template_path.."/"..endpoint.recipient_template.template_name)) then
+	       traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Missing recipient template '%s' in '%s' for endpoint '%s'",
+								    endpoint.recipient_template.template_name,
+								    endpoints_template_path,
+								    fname))
+	       return false
+	    end
+	 end
+
 	 if not file_utils.copy_file(fname, endpoints_path, RUNTIME_PATHS.alert_endpoints) then
 	    return false
+	 end
+
+
+	 if endpoint and endpoint.onLoad then
+	    endpoint.onLoad()
 	 end
       end
    end
@@ -409,7 +475,7 @@ local function load_plugin_web_gui(plugin)
   for fname in pairs(ntop.readdir(gui_dir)) do
     if(fname == "menu.lua") then
       local full_path = os_utils.fixPath(gui_dir .. "/" .. fname)
-      local menu_entry = dofile(full_path)
+      local menu_entry = load_plugin_file(full_path)
 
       if(menu_entry) then
         if(menu_entry.label == nil) then
@@ -501,10 +567,9 @@ end
 -- other threads to see intermediate states and half-populated directories.
 function plugins_utils.loadPlugins(community_plugins_only)
   local locales_utils = require("locales_utils")
-  local plugins = plugins_utils.listPlugins()
+  local plugins = listPlugins()
   local loaded_plugins = {}
   local locales = {}
-  local endpoints_prefs_entries = {}
   local path_map = {}
   local en_locale = locales_utils.readDefaultLocale()
   local current_dir = ntop.getCurrentPluginsDir()
@@ -543,6 +608,23 @@ function plugins_utils.loadPlugins(community_plugins_only)
     ntop.mkdir(path)
   end
 
+  -- Load plugin alert definitions, i.e., definitions found under <plugin_name>/alert_definitions
+  -- alert definitions MUST be loaded before flow status definitions as, flow status definitions,
+  -- may depend on alert definitions
+  for _, plugin in ipairs(plugins) do
+     load_plugin_alert_definitions(plugin)
+  end
+
+  -- Make sure to invalidate the (possibly) already required alert_consts which depends on alert definitions.
+  -- By invalidating the module, we make sure all the newly loaded alert definitions will be picked up by any
+  -- subsequent `require "alert_consts"`
+  package.loaded["alert_consts"] = nil
+
+  -- Load plugin flow status definitions, i.e., definitions found under <plugin_name>/status_definitions
+  for _, plugin in ipairs(plugins) do
+     load_plugin_flow_status_definitions(plugin)
+  end
+
   -- Load the plugins following the dependecies order
   for _, plugin in ipairs(plugins) do
     if community_plugins_only and plugin.edition ~= "community" then
@@ -561,15 +643,14 @@ function plugins_utils.loadPlugins(community_plugins_only)
       io.write(string.format("Loading plugin %s [edition: %s]\n", plugin.key, plugin.edition))
     end
 
-    if load_plugin_definitions(plugin) and
-        load_plugin_i18n(locales, en_locale, plugin) and
+    if load_plugin_i18n(locales, en_locale, plugin) and
         load_plugin_lint(plugin) and
         load_plugin_ts_schemas(plugin) and
         load_plugin_web_gui(plugin) and
         load_plugin_data_dirs(plugin) and
         load_plugin_other(plugin) and
         load_plugin_user_scripts(path_map, plugin) and
-        load_plugin_alert_endpoints(endpoints_prefs_entries, plugin) then
+        load_plugin_alert_endpoints(plugin) then
       loaded_plugins[plugin.key] = plugin
     else
       traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Errors occurred while processing plugin '%s'", plugin.key))
@@ -584,14 +665,6 @@ function plugins_utils.loadPlugins(community_plugins_only)
 
     persistence.store(locale_path, plugins_locales)
     ntop.setDefaultFilePermissions(locale_path)
-  end
-
-  -- Save alert endpoint entries
-  if not table.empty(endpoints_prefs_entries) then
-    local entries_path = os_utils.fixPath(RUNTIME_PATHS.alert_endpoints .. "/prefs_entries.lua")
-
-    persistence.store(entries_path, endpoints_prefs_entries)
-    ntop.setDefaultFilePermissions(entries_path)
   end
 
   -- Save loaded plugins metadata
@@ -610,6 +683,14 @@ function plugins_utils.loadPlugins(community_plugins_only)
 
   -- Reload the periodic scripts to load the new plugins
   ntop.reloadPeriodicScripts()
+
+  -- Mark a change in recipients so they will be automatically reloaded
+  local recipients = require "recipients"
+  recipients.set_recipients_change()
+
+  -- Reload user scripts with their configurations
+  local user_scripts = require "user_scripts"
+  user_scripts.loadUnloadUserScripts(true --[[ load --]])
 
   return(true)
 end
@@ -737,8 +818,7 @@ function plugins_utils.hasAlerts(ifid, options)
 
   rv = (areAlertsEnabled() and
     (alert_utils.hasAlerts("historical", alert_utils.getTabParameters(opts, "historical")) or
-     alert_utils.hasAlerts("engaged", alert_utils.getTabParameters(opts, "engaged"))))
-
+	alert_utils.hasAlerts("engaged", alert_utils.getTabParameters(opts, "engaged"))))
   interface.select(old_iface)
   return(rv)
 end
@@ -755,7 +835,16 @@ local function load_metadata()
    if not METADATA then
       local runtime_path = plugins_utils.getRuntimePath()
       lua_path_utils.package_path_prepend(runtime_path)
-      METADATA = require(PLUGIN_RELATIVE_PATHS.metadata)
+
+      -- Do the require via pcall to avoid Lua generating an exception.
+      -- Print an error and a stacktrace when the require fails.
+      local status
+      status, METADATA = pcall(require, PLUGIN_RELATIVE_PATHS.metadata)
+
+      if not status then
+	 traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Could not load plugins metadata file '%s'", PLUGIN_RELATIVE_PATHS.metadata))
+	 tprint(debug.traceback())
+      end
   end
 end
 
@@ -855,20 +944,16 @@ function plugins_utils.getLoadedAlertEndpoints()
    local rv = {}
 
    lua_path_utils.package_path_prepend(RUNTIME_PATHS.alert_endpoints)
-   local prefs_map = require "prefs_entries" or {}
-
    for fname in pairs(ntop.readdir(RUNTIME_PATHS.alert_endpoints) or {}) do
-      if fname ~= "prefs_entries.lua" and fname:ends(".lua") then
+      if fname:ends(".lua") then
 	 local full_path = os_utils.fixPath(RUNTIME_PATHS.alert_endpoints .. "/" .. fname)
 	 local key = string.sub(fname, 1, string.len(fname) - 4)
 
 	 local endpoint = require(key)
-
 	 if(endpoint) then
 	    if((type(endpoint.isAvailable) ~= "function") or endpoint.isAvailable()) then
 	       endpoint.full_path = full_path
 	       endpoint.key = key
-	       endpoint.prefs_entries = prefs_map[key] and prefs_map[key].entries
 
 	       rv[#rv + 1] = endpoint
 	    end
@@ -964,6 +1049,7 @@ function plugins_utils.cleanup()
   ntop.rmdir(os_utils.fixPath(dirs.workingdir .. "/plugins"))
   ntop.rmdir(ntop.getCurrentPluginsDir())
   ntop.rmdir(ntop.getShadowPluginsDir())
+  clearInternalState()
 end
 
 -- ##############################################

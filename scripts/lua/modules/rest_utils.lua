@@ -1,7 +1,7 @@
 --
 -- (C) 2020 - ntop.org
 --
--- 
+--
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
@@ -9,62 +9,99 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 require "lua_utils"
 local json = require ("dkjson")
 
-local rest_utils = {}
+local rest_utils = {
+   consts = {
+      success = {
+         ok                                         = { http_code = 200, rc = 0, str = "OK" },
+         snmp_device_deleted                        = { http_code = 200, rc = 0, str = "SNMP_DEVICE_DELETED_SUCCESSFULLY"},
+         snmp_device_added                          = { http_code = 200, rc = 0, str = "SNMP_DEVICE_ADDED_SUCCESSFULLY"},
+         snmp_device_edited                         = { http_code = 200, rc = 0, str = "SNMP_DEVICE_EDITED_SUCCESSFULLY"},
+         pool_deleted                               = { http_code = 200, rc = 0, str = "POOL_DELETED_SUCCESSFULLY"},
+         pool_added                                 = { http_code = 200, rc = 0, str = "POOL_ADDED_SUCCESSFULLY"},
+         pool_edited                                = { http_code = 200, rc = 0, str = "POOL_EDITED_SUCCESSFULLY"},
+         pool_member_bound                          = { http_code = 200, rc = 0, str = "POOL_MEMBER_BOUND_SUCCESSFULLY"},
+         -- infrastructure Dashboard
+         infrastructure_instance_added                  = { http_code = 200, rc = 0, str = "INFRASTRUCTURE_INSTANCE_ADDED"},
+         infrastructure_instance_edited                 = { http_code = 200, rc = 0, str = "INFRASTRUCTURE_INSTANCE_EDITED"},
+         infrastructure_instance_deleted                = { http_code = 200, rc = 0, str = "INFRASTRUCTURE_INSTANCE_DELETED"},
+      },
+      err = {
+         not_found                                  = { http_code = 404, rc =  -1, str = "NOT_FOUND"},
+         invalid_interface                          = { http_code = 400, rc =  -2, str = "INVALID_INTERFACE"},
+         not_granted                                = { http_code = 401, rc =  -3, str = "NOT_GRANTED"},
+         invalid_host                               = { http_code = 400, rc =  -4, str = "INVALID_HOST"},
+         invalid_args                               = { http_code = 400, rc =  -5, str = "INVALID_ARGUMENTS"},
+         internal_error                             = { http_code = 500, rc =  -6, str = "INTERNAL_ERROR"},
+         bad_format                                 = { http_code = 400, rc =  -7, str = "BAD_FORMAT"},
+         bad_content                                = { http_code = 400, rc =  -8, str = "BAD_CONTENT"},
+         resolution_failed                          = { http_code = 400, rc =  -9, str = "NAME_RESOLUTION_FAILED"},
+         snmp_device_already_added                  = { http_code = 409, rc = -10, str = "SNMP_DEVICE_ALREADY_ADDED"},
+         snmp_device_unreachable                    = { http_code = 400, rc = -11, str = "SNMP_DEVICE_UNREACHABLE"},
+         snmp_device_no_device_discovered           = { http_code = 400, rc = -12, str = "NO_SNMP_DEVICE_DISCOVERED"},
+         add_pool_failed                            = { http_code = 409, rc = -13, str = "ADD_POOL_FAILED"},
+         edit_pool_failed                           = { http_code = 409, rc = -14, str = "EDIT_POOL_FAILED"},
+         delete_pool_failed                         = { http_code = 409, rc = -15, str = "DELETE_POOL_FAILED"},
+         pool_not_found                             = { http_code = 409, rc = -16, str = "POOL_NOT_FOUND"},
+         bind_pool_member_failed                    = { http_code = 409, rc = -17, str = "BIND_POOL_MEMBER_FAILED"},
+         bind_pool_member_already_bound             = { http_code = 409, rc = -18, str = "BIND_POOL_MEMBER_ALREADY_BOUND"},
+         password_mismatch                          = { http_code = 400, rc = -19, str = "PASSWORD_MISMATCH"},
+         add_user_failed                            = { http_code = 409, rc = -20, str = "ADD_USER_FAILED"},
+         delete_user_failed                         = { http_code = 409, rc = -21, str = "DELETE_USER_FAILED"},
+         snmp_unknown_device                        = { http_code = 400, rc = -22, str = "SNMP_UNKNOWN_DEVICE"},
+         user_already_existing                      = { http_code = 409, rc = -23, str = "USER_ALREADY_EXISTING"},
+         user_does_not_exist                        = { http_code = 409, rc = -24, str = "USER_DOES_NOT_EXIST"},
+         edit_user_failed                           = { http_code = 400, rc = -25, str = "EDIT_USER_FAILED"},
+	 snmp_device_interface_status_change_failed = { http_code = 400, rc = -26, str = "SNMP_DEVICE_INTERFACE_STATUS_CHANGE_FAILED"},
+         configuration_file_mismatch                = { http_code = 400, rc = -27, str = "CONFIGURATION_FILE_MISMATCH" },
+         partial_import                             = { http_code = 409, rc = -28, str = "PARTIAL_IMPORT" },
+         -- Infrastructure Dashboard
+         add_infrastructure_instance_failed         = { http_code = 409, rc = -29, str = "ADD_INFRASTRUCTURE_INSTANCE_FAILED"},
+         edit_infrastructure_instance_failed        = { http_code = 409, rc = -30, str = "EDIT_INFRASTRUCTURE_INSTANCE_FAILED"},
+         delete_infrastructure_instance_failed      = { http_code = 409, rc = -31, str = "DELETE_INFRASTRUCTURE_INSTANCE_FAILED"},
+         infrastructure_instance_not_found          = { http_code = 404, rc = -32, str = "INFRASTRUCTURE_INSTANCE_NOT_FOUND"},
 
-rest_utils.consts_ok                               =  0
-rest_utils.consts_not_found                        = -1
-rest_utils.consts_invalid_interface                = -2
-rest_utils.consts_not_granted                      = -3
-rest_utils.consts_invalid_host                     = -4
-rest_utils.consts_invalid_args                     = -5
-rest_utils.consts_internal_error                   = -6
-rest_utils.consts_bad_format                       = -7
-rest_utils.consts_bad_content                      = -8
-rest_utils.consts_resolution_failed                = -9
-rest_utils.consts_snmp_device_already_added        = -10
-rest_utils.consts_snmp_device_unreachable          = -11
-rest_utils.consts_snmp_device_no_device_discovered = -12
-rest_utils.consts_add_pool_failed                  = -13
-rest_utils.consts_edit_pool_failed                 = -14
-rest_utils.consts_delete_pool_failed               = -15
-rest_utils.consts_pool_not_found                   = -16
-rest_utils.consts_bind_pool_member_failed          = -17
-rest_utils.consts_bind_pool_member_already_bound   = -18
-rest_utils.consts_password_mismatch                = -19
-rest_utils.consts_add_user_failed                  = -20
-rest_utils.consts_delete_user_failed               = -21
-rest_utils.consts_snmp_unknown_device              = -22
+         infrastructure_instance_empty_id           = { http_code = 409, rc = -33, str = "INFRASTRUCTURE_INSTANCE_EMPTY_ID"},
+         infrastructure_instance_empty_alias        = { http_code = 409, rc = -34, str = "INFRASTRUCTURE_INSTANCE_EMPTY_ALIAS"},
+         infrastructure_instance_empty_url          = { http_code = 409, rc = -35, str = "INFRASTRUCTURE_INSTANCE_EMPTY_URL"},
+         infrastructure_instance_empty_token        = { http_code = 409, rc = -36, str = "INFRASTRUCTURE_INSTANCE_EMPTY_TOKEN"},
+         infrastructure_instance_empty_threshold    = { http_code = 409, rc = -37, str = "INFRASTRUCTURE_INSTANCE_EMPTY_THRESHOLD"},
 
-local rc_str_consts = {
-   [rest_utils.consts_ok] = "OK",
-   [rest_utils.consts_not_found] = "NOT_FOUND",
-   [rest_utils.consts_invalid_interface] = "INVALID_INTERFACE",
-   [rest_utils.consts_not_granted] = "NOT_GRANTED",
-   [rest_utils.consts_invalid_host] = "INVALID_HOST",
-   [rest_utils.consts_invalid_args] = "INVALID_ARGUMENTS",
-   [rest_utils.consts_internal_error] = "INTERNAL_ERROR",
-   [rest_utils.consts_bad_format] = "BAD_FORMAT",
-   [rest_utils.consts_bad_content] = "BAD_CONTENT",
-   [rest_utils.consts_resolution_failed] = "NAME_RESOLUTION_FAILED",
-   [rest_utils.consts_snmp_device_already_added] = "SNMP_DEVICE_ALREADY_ADDED",
-   [rest_utils.consts_snmp_device_unreachable] = "SNMP_DEVICE_UNREACHABLE",
-   [rest_utils.consts_snmp_device_no_device_discovered] = "NO_SNMP_DEVICE_DISCOVERED",
-   [rest_utils.consts_add_pool_failed] = "ADD_POOL_FAILED",
-   [rest_utils.consts_edit_pool_failed] = "EDIT_POOL_FAILED",
-   [rest_utils.consts_delete_pool_failed] = "DELETE_POOL_FAILED",
-   [rest_utils.consts_pool_not_found] = "POOL_NOT_FOUND",
-   [rest_utils.consts_bind_pool_member_failed] = "BIND_POOL_MEMBER_FAILED",
-   [rest_utils.consts_bind_pool_member_already_bound] = "BIND_POOL_MEMBER_ALREADY_BOUND",
-   [rest_utils.consts_password_mismatch] = "PASSWORD_MISMATCH",
-   [rest_utils.consts_add_user_failed] = "ADD_USER_FAILED",
-   [rest_utils.consts_delete_user_failed] = "DELETE_USER_FAILED",
-   [rest_utils.consts_snmp_unknown_device] = "SNMP_UNKNOWN_DEVICE",
+         infrastructure_instance_same_id            = { http_code = 409, rc = -38, str = "INFRASTRUCTURE_INSTANCE_SAME_ID"},
+         infrastructure_instance_same_alias         = { http_code = 409, rc = -39, str = "INFRASTRUCTURE_INSTANCE_SAME_ALIAS"},
+         infrastructure_instance_same_url           = { http_code = 409, rc = -40, str = "INFRASTRUCTURE_INSTANCE_SAME_URL"},
+         infrastructure_instance_same_token         = { http_code = 409, rc = -41, str = "INFRASTRUCTURE_INSTANCE_SAME_TOKEN"},
+
+         infrastructure_instance_already_existing   = { http_code = 409, rc = -42, str = "INFRASTRUCTURE_INSTANCE_ALREADY_EXISTING"},
+
+	 infrastructure_instance_check_failed       = { http_code = 409, rc = -43, str = "INFRASTRUCTURE_INSTANCE_CHECK_FAILED"},
+	 infrastructure_instance_check_not_found    = { http_code = 409, rc = -44, str = "INFRASTRUCTURE_INSTANCE_CHECK_NOT_FOUND"},
+	 infrastructure_instance_check_invalid_rsp  = { http_code = 409, rc = -45, str = "INFRASTRUCTURE_INSTANCE_CHECK_INVALID_RESPONSE"},
+	 infrastructure_instance_check_auth_failed  = { http_code = 409, rc = -46, str = "INFRASTRUCTURE_INSTANCE_CHECK_AUTH_FAILED"},
+      },
+   }
 }
 
-function rest_utils.rc(ret_code, response)
-   local client_rsp = { rc = ret_code, rc_str = rc_str_consts[ret_code], rsp = response or {} }
-   return(json.encode(client_rsp))
+function rest_utils.rc(ret_const, response)
+   local ret_code = ret_const.rc
+   local rc_str   = ret_const.str  -- String associated to the return code
+   local rc_str_hr -- String associated to the retrun code, human readable
+
+   -- Prepare the human readable string
+   rc_str_hr = i18n("rest_consts."..rc_str) or "Unknown"
+
+   local client_rsp = {
+      rc = ret_code,
+      rc_str = rc_str,
+      rc_str_hr = rc_str_hr,
+      rsp = response or {}
+   }
+
+   return json.encode(client_rsp)
 end
 
+function rest_utils.answer(ret_const, response, extra_headers)
+   sendHTTPHeader('application/json', nil, extra_headers, ret_const.http_code)
+   print(rest_utils.rc(ret_const, response))
+end
 
 return rest_utils

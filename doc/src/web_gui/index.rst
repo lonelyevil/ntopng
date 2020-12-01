@@ -29,7 +29,7 @@ Administrator privileges are granted to user *admin*. If an unauthenticated user
 The header bar show the ntopng status information, in particular:
 
 - The currently `selected interface <interfaces.html>`_.
-- The interface Up/Down througput chart.
+- The interface Up/Down throughput chart.
 - A series of coloured badges.
 - A `search box <host_search.html>`_.
 - The notifications bell and the `user administration menu <administration.html>`_.
@@ -68,6 +68,6 @@ Each individual menu bar entry will be discussed below.
     interfaces
     settings
     administration
-    alerts
     host_search
     storage_monitor
+    import_export

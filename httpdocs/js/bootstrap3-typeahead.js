@@ -161,13 +161,18 @@
         this.query = this.$element.val() || this.$element.text() || '';
       }
 
+      // trim spaces
+      this.query.trim();
+
       if (this.query.length < this.options.minLength && !this.options.showHintOnFocus) {
         return this.shown ? this.hide() : this;
       }
 
       var worker = $.proxy(function () {
 
+        // do the HTTP request to fetch data
         if ($.isFunction(this.source)) {
+          // invoke the source function and pass the query as data
           this.source(this.query, $.proxy(this.process, this));
         } else if (this.source) {
           this.process(this.source);
@@ -210,8 +215,11 @@
     },
 
     matcher: function (item) {
-      var it = this.displayText(item);
-      return ~it.toLowerCase().indexOf(this.query.toLowerCase());
+      var text = this.displayText(item);
+      // trim the final trailing spaces inside the query because the text variable
+      // doesn't contain the query substring with trailing spaces
+      // example: query=`AA:    ` it's not contained inside text=`AA:`
+      return ~text.toLowerCase().indexOf(this.query.trimEnd().toLowerCase());
     },
 
     sorter: function (items) {
@@ -232,7 +240,7 @@
 
     highlighter: function (item) {
       var html = $('<div></div>');
-      var query = this.query;
+      var query = this.query.trim();
       var i = item.toLowerCase().indexOf(query.toLowerCase());
       var len = query.length;
       var leftPart;
@@ -548,7 +556,7 @@
   Typeahead.defaults = {
     source: [],
     items: 8,
-    menu: '<ul class="typeahead dropdown-menu" role="listbox"></ul>',
+    menu: '<ul class="typeahead dropdown-menu dropdown-menu-right" role="listbox"></ul>',
     item: '<li><a class="dropdown-item" href="#" role="option"></a></li>',
     minLength: 1,
     scrollHeight: 0,

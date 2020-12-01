@@ -118,26 +118,7 @@ void Logstash::sendLSdata() {
   int skipDequeue = 0;
   int sent = 0;
   size_t sentLength = 0;
-  u_int len, num_flows;
-
-
-  server = gethostbyname(ntop->getPrefs()->get_ls_host());
-  portstr = ntop->getPrefs()->get_ls_port();
-
-  if(server == NULL || portstr == NULL) {
-    // can't send
-    return;
-  }
-
-  proto = ntop->getPrefs()->get_ls_proto();
-  if(proto && !strncmp(proto,"udp",3)) {
-    sendTCP = 0;
-  }
-  portno = atoi(portstr);
-
-  memset((char *) &serv_addr, 0, sizeof(serv_addr));
-  serv_addr.sin_family = AF_INET;
-  memcpy((char *)&serv_addr.sin_addr.s_addr, (char *)server->h_addr, server->h_length);
+  u_int len = 0, num_flows = 0;
 
   server = gethostbyname(ntop->getPrefs()->get_ls_host());
   portstr = ntop->getPrefs()->get_ls_port();
@@ -207,7 +188,6 @@ void Logstash::sendLSdata() {
 	// Next loop should start dequeuing again if all goes well
 	skipDequeue = 2;
       } else {
-        len = 0, num_flows = 0;
         listMutex.lock(__FILE__, __LINE__);
 	// clear buffer to get rid of garbage bytes
         memset(&postbuf[0],0,sizeof(postbuf));

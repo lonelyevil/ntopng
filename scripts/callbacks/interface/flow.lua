@@ -20,6 +20,7 @@ local alert_consts = require("alert_consts")
 local flow_consts = require("flow_consts")
 local json = require("dkjson")
 local alerts_api = require("alerts_api")
+local recipients = require "recipients"
 local ids_utils = nil
 
 if ntop.isPro() then
@@ -35,18 +36,13 @@ local score_enabled = nil
 
 local available_modules = nil
 
--- Keeps information about the current predominant alerted status
+-- Keeps information about the current alerted alerted status
 local alerted_status
 local alert_type_params
 local alerted_status_score
-local hosts_disabled_status
 local confset_id
 local alerted_user_script
 local cur_user_script
-
--- Save them as they are overridden
-local c_flow_set_status = flow.setStatus
-local c_flow_clear_status = flow.clearStatus
 
 local stats = {
    num_invocations = 0, 	-- Total number of invocations of this module
@@ -150,9 +146,6 @@ function setup()
    flows_config, confset_id = user_scripts.getConfigById(configsets, user_scripts.DEFAULT_CONFIGSET_ID, "flow")
    alerted_user_script = nil
 
-   -- Load the disabled hosts status. As hosts stay in the view, the correct disabled status needs to look there
-   hosts_disabled_status = alerts_api.getAllHostsDisabledStatusBitmaps(view_ifid or ifid)
-
    -- To execute flows, the viewed interface id is used instead, as flows reside in the viewed interface, not in the view
    available_modules = user_scripts.load(ifid, user_scripts.script_types.flow, "flow", {
       do_benchmark = true,
@@ -236,28 +229,13 @@ end
 -- #################################################################
 
 local function triggerFlowAlert(now, l4_proto)
-
    if not areAlertsEnabled() then
       return(false)
    end
 
    local cli_key = flow.getClientKey()
    local srv_key = flow.getServerKey()
-   local cli_disabled_status = hosts_disabled_status[cli_key] or 0
-   local srv_disabled_status = hosts_disabled_status[srv_key] or 0
    local status_key = alerted_status.status_key
-
-   -- Ensure that this status was not disabled by the user on the client/server
-   if (cli_disabled_status ~= 0 and ntop.bitmapIsSet(cli_disabled_status, status_key)) or
-       (srv_disabled_status ~= 0 and ntop.bitmapIsSet(srv_disabled_status, status_key)) then
-
-      if do_trace then
-	  trace_f(string.format("Not triggering flow alert for status %u [cli_bitmap: %s/%d][srv_bitmap: %s/%d]",
-				status_key, cli_key, cli_disabled_status, srv_key, srv_disabled_status))
-      end
-
-      return(false)
-   end
 
    if do_trace then
       trace_f(string.format("flow.triggerAlert(type=%s, severity=%s)",
@@ -276,49 +254,22 @@ local function triggerFlowAlert(now, l4_proto)
       alert_type_params = json.encode(alert_type_params)
    end
 
-   local triggered = flow.triggerAlert(status_key,
+   local res = flow.triggerAlert(
+      status_key,
       alerted_status.alert_type.alert_key,
       alerted_status.alert_severity.severity_id,
-      now, alert_type_params)
+      alerted_status_score,
+      now,
+      alert_type_params)
 
-   return(triggered)
-end
-
--- #################################################################
-
-local function in_time()
-   -- Calling os.time() costs per call ~0.033 usecs so nothing expensive to be called every time
-   --
-   -- This is the code used to profile
-   --
-   -- local num_calls = 1000000
-   -- local start_ticks = ntop.getticks()
-   -- for i = 0, num_calls do
-   --    local a = os.time()
-   -- end
-   -- local end_ticks = ntop.getticks()
-   -- traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("usecs [ticks]: %.8f", (end_ticks - start_ticks) / ntop.gettickspersec() / num_calls * 1000 * 1000))
-
-
-   local res
-   local time_left = ntop.getDeadline() - os.time()
-
-   if time_left >= 4 then
-      -- There's enough time to run every script
-      res = true
-   elseif time_left > 1 then
-      -- Start skipping unidirectional flows as the deadline is approaching
-      res = flow.getPacketsRcvd() > 0
-   else
-      -- No time left
-      res = false
+   -- There's no lua table for the flow alert. Flow alert is generated from C and is returned to
+   -- Lua as a JSON string. Hence, to dispatch it to the recipient, alert must be decoded from JSON.
+   -- Then, the dispatch will re-encode it, thus wasting more time. This needs to be fixed.
+   if res.alert_json then
+      recipients.dispatch_notification(json.decode(res.alert_json), alerted_user_script)
    end
 
-   if not res and calculate_stats then
-      stats.num_skipped_to_time = stats.num_skipped_to_time + 1
-   end
-
-   return res
+   return(res.triggered)
 end
 
 -- #################################################################
@@ -339,14 +290,10 @@ local function call_modules(l4_proto, master_id, app_id, mod_fn, update_ctr)
       return true
    end
 
-   if not in_time() then
-      return false -- No time left to execute scripts
-   end
-
    local all_modules = available_modules.modules
    local hooks = available_modules.l4_hooks[l4_proto]
 
-   -- Reset predominant status information
+   -- Reset alerted status information
    alerted_status = nil
    alert_type_params = nil
    alerted_status_score = -1
@@ -364,7 +311,7 @@ local function call_modules(l4_proto, master_id, app_id, mod_fn, update_ctr)
    end
 
    if do_trace then
-      trace_f(string.format("%s()[START]: bitmap=0x%x predominant=%d", mod_fn, flow.getStatus(), flow.getPredominantStatus()))
+      trace_f(string.format("%s()[START]: bitmap=0x%x alerted=%d", mod_fn, flow.getStatus(), flow.getAlertedStatus()))
    end
 
    local now = os.time()
@@ -374,18 +321,6 @@ local function call_modules(l4_proto, master_id, app_id, mod_fn, update_ctr)
       local mod_key = mod.mod_key
       local hook_fn = mod.mod_fn
       local script = all_modules[mod_key]
-
-      if mod_fn == "periodicUpdate" then
-	 -- Check if the script should be invoked
-	 if (update_ctr % script.periodic_update_divisor) ~= 0 then
-	    if do_trace then
-	       trace_f(string.format("%s() [check: %s]: skipping periodicUpdate [ctr: %s, divisor: %s, frequency: %s]",
-				  mod_fn, mod_key, update_ctr, script.periodic_update_divisor, script.periodic_update_seconds))
-	    end
-
-	    goto continue
-	 end
-      end
 
       -- Check if the script requires the flow to have successfully completed the three-way handshake
       if script.three_way_handshake_ok and twh_in_progress then
@@ -433,14 +368,14 @@ local function call_modules(l4_proto, master_id, app_id, mod_fn, update_ctr)
    end
 
    if do_trace then
-      trace_f(string.format("%s()[END]: bitmap=0x%x predominant=%d score=%d flow.score=%d", 
-         mod_fn, flow.getStatus(), flow.getPredominantStatus(), 
+      trace_f(string.format("%s()[END]: bitmap=0x%x alerted=%d score=%d flow.score=%d", 
+         mod_fn, flow.getStatus(), flow.getAlertedStatus(), 
          alerted_status_score, flow.getAlertedStatusScore())
 )
    end
 
    -- Only trigger the alert if its score is greater than the currently
-   -- triggered alert score
+   -- triggered alert score (when score is supported)
    if areAlertsEnabled() and 
       alerted_status and 
       (alerted_status_score > flow.getAlertedStatusScore()) then
@@ -457,8 +392,20 @@ end
 
 -- #################################################################
 
+local function setStatus(flow_status_type, flow_score, cli_score, srv_score)
+   local status_key = flow_status_type.status_key
+
+   flow_score = math.min(math.max(flow_score or 0, 0), max_score)
+   cli_score = math.min(math.max(cli_score or 0, 0), max_score)
+   srv_score = math.min(math.max(srv_score or 0, 0), max_score)
+
+   return flow.setStatus(status_key, flow_score, cli_score, srv_score, cur_user_script.key, cur_user_script.category.id)
+end
+
+-- #################################################################
+
 -- @brief This provides an API that flow user_scripts can call in order to
--- set a flow status bit. The status_info of the predominant status is
+-- set a flow status bit. The status_info of the alerted status is
 -- saved for later use.
 function flow.triggerStatus(status_info, flow_score, cli_score, srv_score)
    local flow_status_type = status_info.status_type
@@ -471,18 +418,9 @@ function flow.triggerStatus(status_info, flow_score, cli_score, srv_score)
       return
    end
 
-   if(flow_status_type and status_info and ids_utils and
-      status_key == flow_consts.status_types.status_external_alert.status_key and
-      status_info.alert_type_params and (status_info.alert_type_params.source == "suricata")) then
-      local fs, cs, ss = ids_utils.computeScore(status_info.alert_type_params)
-      flow_score = fs
-      cli_score = cs
-      srv_score = ss
-   end
-
    -- NOTE: The "flow_status_type.status_key < alerted_status.status_key" check must
-   -- correspond to the Flow::getPredominantStatus logic in order to determine
-   -- the same predominant status
+   -- correspond to the Flow::getAlertedStatus logic in order to determine
+   -- the same alerted status
    if((not alerted_status) or (flow_score > alerted_status_score) or
 	 ((flow_score == alerted_status_score) and (flow_status_type.status_key < alerted_status.status_key))) then
       -- The new alerted status as an higher score
@@ -492,39 +430,7 @@ function flow.triggerStatus(status_info, flow_score, cli_score, srv_score)
       alerted_user_script = cur_user_script
    end
 
-   flow.setStatus(flow_status_type, flow_score, cli_score, srv_score)
-end
-
--- #################################################################
-
--- NOTE: overrides the C flow.setStatus (now saved in c_flow_set_status)
-function flow.setStatus(flow_status_type, flow_score, cli_score, srv_score)
-   local status_key = flow_status_type.status_key
-
-   if(not flow.isStatusSet(status_key)) then
-      flow_score = math.min(math.max(flow_score or 0, 0), max_score)
-      cli_score = math.min(math.max(cli_score or 0, 0), max_score)
-      srv_score = math.min(math.max(srv_score or 0, 0), max_score)
-
-      c_flow_set_status(status_key, flow_score, cli_score, srv_score, cur_user_script.key)
-      return(true)
-   end
-
-   return(false)
-end
-
--- #################################################################
-
--- NOTE: overrides the C flow.clearStatus (now saved in c_flow_clear_status)
-function flow.clearStatus(flow_status_type)
-   local status_key = flow_status_type.status_key
-
-   if c_flow_clear_status(status_key) then
-      -- The status has actually changed
-      if do_trace then
-	 trace_f(string.format("flow.clearStatus: predominant status changed to %d", flow.getPredominantStatus()))
-      end
-   end
+   setStatus(flow_status_type, flow_score, cli_score, srv_score)
 end
 
 -- #################################################################

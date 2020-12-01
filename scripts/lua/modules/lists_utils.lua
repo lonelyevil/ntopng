@@ -9,18 +9,26 @@ local os_utils = require("os_utils")
 local categories_utils = require("categories_utils")
 local json = require("dkjson")
 local alerts_api = require("alerts_api")
+local alert_severities = require "alert_severities"
 local alert_consts = require "alert_consts"
 
 -- ##############################################
 
-local trace_level = TRACE_INFO -- TRACE_NORMAL
+-- NOTE: metadata and status are handled as separate keys.
+-- Metadata can only be updated by the gui, whereas status can only be
+-- updated by housekeeping. This avoid concurrency issues.
+local METADATA_KEY = "ntopng.prefs.category_lists.metadata"
+local STATUS_KEY = "ntopng.prefs.category_lists.status"
 
-local CUSTOM_CATEGORY_MINING = 99
-local CUSTOM_CATEGORY_MALWARE = 100
+local trace_level =  TRACE_INFO -- TRACE_NORMAL
+
+local CUSTOM_CATEGORY_MINING        = 99
+local CUSTOM_CATEGORY_MALWARE       = 100
 local CUSTOM_CATEGORY_ADVERTISEMENT = 101
 
-local DEFAULT_UPDATE_INTERVAL = 86400
-local MAX_LIST_ERRORS = 3
+local DEFAULT_UPDATE_INTERVAL       = 86400
+local MAX_LIST_ERRORS               = 2
+local MIN_DOWNLOAD_INTERVAL         = 3600
 
 -- IP addresses have very litte impact on memory/load time.
 -- 150k IP addresses rules can be loaded in 2 seconds
@@ -61,8 +69,8 @@ local BUILTIN_LISTS = {
       format = "ip",
       enabled = true,
       update_interval = DEFAULT_UPDATE_INTERVAL,
-   }, ["Cisco Talos Intelligence"] = {
-      url = "https://talosintelligence.com/documents/ip-blacklist",
+   }, ["Snort IP Blacklist"] = {
+      url = "https://snort.org/documents/ip-blacklist",
       category = CUSTOM_CATEGORY_MALWARE,
       format = "ip",
       enabled = true,
@@ -78,12 +86,6 @@ local BUILTIN_LISTS = {
       category = CUSTOM_CATEGORY_MALWARE,
       format = "ip",
       enabled = true,
-      update_interval = DEFAULT_UPDATE_INTERVAL,
-   }, ["MalwareDomainList Hosts"] = {
-      url = "https://www.malwaredomainlist.com/hostslist/hosts.txt",
-      category = CUSTOM_CATEGORY_MALWARE,
-      format = "hosts",
-      enabled = false,
       update_interval = DEFAULT_UPDATE_INTERVAL,
    }, ["Anti-WebMiner"] = {
       url = "https://raw.githubusercontent.com/greatis/Anti-WebMiner/master/hosts",
@@ -103,12 +105,6 @@ local BUILTIN_LISTS = {
       format = "domain",
       enabled = is_nedge,
       update_interval = DEFAULT_UPDATE_INTERVAL,
-   }, ["hpHosts Ad and Tracking"] = {
-      url = "https://hosts-file.net/ad_servers.txt",
-      category = CUSTOM_CATEGORY_ADVERTISEMENT,
-      format = "hosts",
-      enabled = is_nedge,
-      update_interval = DEFAULT_UPDATE_INTERVAL,
    }, ["AdAway default blocklist"] = {
       url = "https://adaway.org/hosts.txt",
       category = CUSTOM_CATEGORY_ADVERTISEMENT,
@@ -125,13 +121,6 @@ local BUILTIN_LISTS = {
 }
 
 -- ##############################################
-
--- NOTE: metadata and status are handled as separate keys.
--- Metadata can only be updated by the gui, whereas status can only be
--- updated by housekeeping. This avoid concurrency issues.
-local METADATA_KEY = "ntopng.prefs.category_lists.metadata"
-local STATUS_KEY = "ntopng.prefs.category_lists.status"
-
 
 local function loadListsFromRedis()
    local lists_metadata = ntop.getPref(METADATA_KEY)
@@ -167,13 +156,13 @@ end
 
 -- @brief save the lists stats and other status to redis.
 -- @note see saveListsMetadataToRedis for user preferences information
-local function saveListsStatusToRedis(lists)
+local function saveListsStatusToRedis(lists, caller)
    local status = {}
 
    for list_name, list in pairs(lists or {}) do
       status[list_name] = list.status
    end
-
+   
    ntop.setPref(STATUS_KEY, json.encode(status))
 end
 
@@ -253,7 +242,7 @@ end
 -- ##############################################
 
 -- Force a single list reload
-function lists_utils.updateList(list_name)
+function lists_utils.updateList(list_name)   
    ntop.setCache("ntopng.cache.category_lists.update." .. list_name, "1")
    lists_utils.downloadLists()
 end
@@ -281,19 +270,20 @@ local function getNextListUpdate(list)
 
    if(list.status.last_error and (list.status.num_errors < MAX_LIST_ERRORS)) then
       -- When the download fails, retry next hour
-      interval = 3600
+      interval = MIN_DOWNLOAD_INTERVAL
    else
       interval = list.update_interval
    end
-
+   
    local next_update
-
+   
    -- align if possible
    if interval == 3600 then
       next_update = ntop.roundTime(list.status.last_update, 3600, false)
    elseif interval == 86400 then
       next_update = ntop.roundTime(list.status.last_update, 86400, true --[[ UTC align ]])
    else
+      if(interval < MIN_DOWNLOAD_INTERVAL) then interval = MIN_DOWNLOAD_INTERVAL end
       next_update = list.status.last_update + interval
    end
 
@@ -301,16 +291,37 @@ local function getNextListUpdate(list)
 end
 
 -- Returns true if the given list should be updated
-function lists_utils.shouldUpdate(list_name, list, now)
-   local list_file = getListCacheFile(list_name, false)
-   local next_update = getNextListUpdate(list)
+function shouldUpdate(list_name, list, now)
+   local list_file
+   local next_update
+   
+   if(list.enabled == false) then
+      return(false)
+   end
+   
+   list_file = getListCacheFile(list_name, false)
+   next_update = getNextListUpdate(list, now)
 
-   -- note: num_errors is used to avoid retying downloading the same list again when
-   -- the file does not exist
-   return(list.enabled and
-	     ((now >= next_update) or
-		   (not ntop.exists(list_file) and (list.status.num_errors < MAX_LIST_ERRORS)) or
-		   (ntop.getCache("ntopng.cache.category_lists.update." .. list_name) == "1")))
+   if(false) then
+      tprint('---------------')
+      tprint(list_file)
+      tprint('-')
+      tprint(ntop.getCache("ntopng.cache.category_lists.update." .. list_name))
+      tprint('-')
+      tprint(list)
+      tprint('---------------')
+      
+      tprint(((now >= next_update) or
+	       (not ntop.exists(list_file) and (list.status.num_errors < MAX_LIST_ERRORS)) or
+	       (ntop.getCache("ntopng.cache.category_lists.update." .. list_name) == "1")))
+      return(false)
+   else
+      -- note: num_errors is used to avoid retying downloading the same list again when
+      -- the file does not exist
+      return(((now >= next_update) or
+	       (not ntop.exists(list_file) and (list.status.num_errors < MAX_LIST_ERRORS)) or
+	       (ntop.getCache("ntopng.cache.category_lists.update." .. list_name) == "1")))
+   end
 end
 
 -- ##############################################
@@ -331,10 +342,12 @@ local function checkListsUpdate(timeout)
    for list_name, list in pairsByKeys(lists) do
       local list_file = getListCacheFile(list_name, false)
 
-      if lists_utils.shouldUpdate(list_name, list, now) then
+      if(shouldUpdate(list_name, list, now)) then
 	 local temp_fname = getListCacheFile(list_name, true)
+	 local msg = string.format("Updating list '%s' [%s]... ", list_name, list.url)
 
-	 traceError(trace_level, TRACE_CONSOLE, string.format("Updating list '%s'...", list_name))
+	 traceError(trace_level, TRACE_INFO, string.format("Updating list '%s'... ", list_name))
+	 
 	 local started_at = os.time()
 	 local res = ntop.httpFetch(list.url, temp_fname, timeout)
 
@@ -344,6 +357,16 @@ local function checkListsUpdate(timeout)
 	    list.status.last_error = false
 	    list.status.num_errors = 0
 	    needs_reload = true
+
+	    alerts_api.store(
+	       alerts_api.categoryListsEntity(list_name),
+	       alert_consts.alert_types.alert_list_download_succeeded.create(
+		  alert_severities.notice,
+		  list_name
+	       )
+	    )
+
+	    msg = msg .. "OK"
 	 else
 	    -- failure
 	    local respcode = 0
@@ -361,7 +384,7 @@ local function checkListsUpdate(timeout)
 	       end
 
 	       if(respcode > 0) then
-		  last_error = last_error .. i18n("category_lists.http_code", {err_code = respcode})
+		  last_error = string.format("%s %s", last_error, i18n("category_lists.http_code", {err_code = respcode}))
 	       end
 	    end
 
@@ -371,12 +394,16 @@ local function checkListsUpdate(timeout)
 	    alerts_api.store(
 	       alerts_api.categoryListsEntity(list_name),
 	       alert_consts.alert_types.alert_list_download_failed.create(
-		  alert_consts.alert_severities.error,
+		  alert_severities.error,
 		  list_name,
 		  last_error
 	       )
 	    )
+
+	    msg = msg .. "ERROR ["..last_error.."]"
 	 end
+
+	 traceError(TRACE_NORMAL, TRACE_CONSOLE, msg)
 
 	 now = os.time()
 	 -- set last_update even on failure to avoid blocking on the same list again
@@ -392,7 +419,7 @@ local function checkListsUpdate(timeout)
    end
 
    -- update lists state
-   saveListsStatusToRedis(lists)
+   saveListsStatusToRedis(lists, "checkListsUpdate")
 
    if(not all_processed) then
       -- Still in progress, do not mark as finished yet
@@ -642,7 +669,7 @@ local function reloadListsNow()
    end
 
    -- update lists state
-   saveListsStatusToRedis(lists)
+   saveListsStatusToRedis(lists, "reloadListsNow")
 
    -- Load user-customized categories
    for category_id, hosts in pairs(user_custom_categories) do
@@ -661,9 +688,10 @@ local function reloadListsNow()
    -- Calculate stats
    stats.duration = (os.time() - stats.begin)
 
-   traceError(trace_level, TRACE_CONSOLE, string.format("Lists (%u hosts, %u IPs, %u JA3) loaded in %d seconds",
-      stats.num_hosts, stats.num_ips, stats.num_ja3, stats.duration))
-
+   traceError(TRACE_NORMAL, TRACE_CONSOLE,
+	      string.format("Category Lists (%u hosts, %u IPs, %u JA3) loaded in %d sec",
+			    stats.num_hosts, stats.num_ips, stats.num_ja3, stats.duration))
+   
    -- Save the stats
    ntop.setCache("ntopng.cache.category_lists.load_stats", json.encode(stats))
 
@@ -680,21 +708,6 @@ end
 -- This is necessary to avoid concurrency issues
 function lists_utils.downloadLists()
    ntop.setCache("ntopng.cache.download_lists_utils", "1")
-end
-
--- ##############################################
-
--- @brief Clears the lists download errors
-function lists_utils.clearErrors()
-   local lists = lists_utils.getCategoryLists()
-
-   for _, list in pairs(lists) do
-      if(list.status ~= nil) then
-	 list.status.num_errors = 0
-      end
-   end
-
-   saveListsStatusToRedis(lists)
 end
 
 -- ##############################################
@@ -732,6 +745,18 @@ function lists_utils.checkReloadLists()
 
       -- print("[DEBUG] **** Reloading is over ****\n")
    end
+end
+
+-- ##############################################
+
+function lists_utils.startup()
+   traceError(TRACE_NORMAL, TRACE_CONSOLE, "Refreshing category lists...")
+   
+   lists_utils.downloadLists()
+   lists_utils.reloadLists()
+   -- Need to do the actual reload also here as otherwise some
+   -- flows may be misdetected until housekeeping.lua is executed
+   lists_utils.checkReloadLists()   
 end
 
 -- ##############################################

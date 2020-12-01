@@ -79,17 +79,22 @@ Ping::Ping() {
   Utils::dropWriteCapabilities();
 #endif
 
-  if(sd == -1)
-    ntop->getTrace()->traceEvent(TRACE_ERROR, "Ping IPv4 socket creation error: %s",
-				 strerror(errno));
-  else
+  if(sd == -1) {
+    if (errno != EPROTONOSUPPORT /* Avoid flooding logs when IPv4 is not supported */)
+      ntop->getTrace()->traceEvent(TRACE_ERROR, "Ping IPv4 socket creation error: %s",
+				   strerror(errno));
+  } else {
     setOpts(sd);
+  }
 
-  if(sd6 == -1)
-    ntop->getTrace()->traceEvent(TRACE_ERROR, "Ping IPv6 socket creation error: %s",
-				 strerror(errno));
-  else
+  if(sd6 == -1) {
+    if (errno != EPROTONOSUPPORT &&
+        errno != EAFNOSUPPORT) /* Avoid flooding logs when IPv6 is not supported */
+      ntop->getTrace()->traceEvent(TRACE_ERROR, "Ping IPv6 socket creation error: %s",
+				   strerror(errno));
+  } else {
     setOpts(sd6);
+  }
 
   if((sd == -1) && (sd6 == -1))
     throw "Socket creation error";
@@ -224,7 +229,7 @@ void Ping::pollResults() {
     if(select(fd_max+1, &mask, 0, 0, &wait_time) > 0) {
       unsigned char buf[1024];
       
-      if(FD_ISSET(sd, &mask)) {
+      if(sd != -1 && FD_ISSET(sd, &mask)) {
 	struct sockaddr_in addr;
 	socklen_t len = sizeof(addr);
 	
@@ -232,7 +237,7 @@ void Ping::pollResults() {
 	handleICMPResponse(buf, bytes, &addr.sin_addr, NULL);
       }
       
-      if(FD_ISSET(sd6, &mask)) {
+      if(sd6 != -1 && FD_ISSET(sd6, &mask)) {
 	struct sockaddr_in6 addr;
 	socklen_t len = sizeof(addr);
 	

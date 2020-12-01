@@ -30,8 +30,8 @@ Enabling Flow Dump
 ------------------
 
 In order to dump flows to disk ntopng requires the `-F nindex` option to be
-specified. After this is enabled, new "Flows" entries will appear into the
-historical charts `tabular view`_ dropdown:
+specified as described in the `Flows Dump documentation`_. After this is enabled,
+new "Flows" entries will appear into the historical charts `tabular view`_ dropdown:
 
 .. figure:: img/historical_flows_dropdown.png
   :align: center
@@ -54,7 +54,7 @@ Here is an overview of the currently available flows views:
   - Top L7 Contacts: shows the top <client, server, L7 protocol> pairs and their total traffic
 
 By clicking on the |drilldown_icon| icon, it's possible to explode a particular communication
-or host and analize the raw flows.
+or host and analyze the raw flows.
 
 .. figure:: img/historical_flows_raw_flows.png
   :align: center
@@ -87,6 +87,6 @@ The retention of the flows dump on disk can be configured from the
 
 .. |drilldown_icon| image:: img/drilldown_icon.png
 .. |flow_export_icon| image:: img/flow_export_icon.png
-.. _`Flows Dump documentation` : advanced_features/flows_dump.html#mysql
+.. _`Flows Dump documentation` : advanced_features/flows_dump.html
 .. _`Historical Charts`: web_gui/historical.html
 .. _`tabular view`: web_gui/historical.html#tabular-view

@@ -9,10 +9,7 @@ require "lua_utils"
 
 local page_utils = require("page_utils")
 
-local alert_notification = require("alert_notification")
-local menu_alert_notifications = require("menu_alert_notifications")
 sendHTTPContentTypeHeader('text/html')
-
 
 page_utils.set_active_menu_entry(page_utils.menu_entries.geo_map)
 
@@ -25,12 +22,7 @@ hosts_stats = hosts_stats["hosts"]
 
 if (num > 0) then
 
-  menu_alert_notifications.render_notifications("host-geomap-notifications", {
-    alert_notification:create(0, i18n("warning"), i18n("geo_map.warning_accuracy"), "warning")
-  })
-
   print ([[
-    <div class="container-fluid">
       <div class="row">
         <div class='col-md-12 col-lg-12 col-xs-12 mb-4'>
   ]])
@@ -42,10 +34,13 @@ if (num > 0) then
             </button>
             <p id='error-message'></p>
           </div>
-          <div style="height: 720px" id="map-canvas"></div>
+          <div class="d-flex justify-content-center align-items-center" style="height: 720px" id="map-canvas">
+              <div class="spinner-border text-primary" role="status">
+                <span class="sr-only">Loading...</span>
+              </div>
+          </div>
         </div>
       </div>
-    </div>
   ]])
 
   print([[

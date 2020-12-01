@@ -23,6 +23,7 @@ local influxdb = require("influxdb")
 local plugins_utils = require("plugins_utils")
 local nindex_utils = nil
 local info = ntop.getInfo()
+local auth = require "auth"
 
 local email_peer_pattern = [[^(([A-Za-z0-9._%+-]|\s)+<)?[A-Za-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,6}>?$]]
 
@@ -36,8 +37,6 @@ end
 
 sendHTTPContentTypeHeader('text/html')
 
-
-local show_advanced_prefs = false
 local alerts_disabled = false
 local product = ntop.getInfo().product
 local message_info = ""
@@ -51,7 +50,7 @@ local auth_toggles = {
   ["radius"] = "toggle_radius_auth",
 }
 
-if(haveAdminPrivileges()) then
+if auth.has_capability(auth.capabilities.preferences) then
   if not table.empty(_POST) then
     if _GET["tab"] == "auth" then
       local one_enabled = false
@@ -156,6 +155,21 @@ if(haveAdminPrivileges()) then
       print[[</div>]]
    end
 
+  local show_advanced_prefs = false
+
+  if toboolean(_POST["show_advanced_prefs"]) ~= nil then
+    ntop.setPref(show_advanced_prefs_key, _POST["show_advanced_prefs"])
+    show_advanced_prefs = toboolean(_POST["show_advanced_prefs"])
+    notifyNtopng(show_advanced_prefs_key, _POST["show_advanced_prefs"])
+ else
+    show_advanced_prefs = toboolean(ntop.getPref(show_advanced_prefs_key))
+    if isEmptyString(show_advanced_prefs) then show_advanced_prefs = false end
+ end
+
+ if _GET['show_advanced_prefs'] ~= nil then
+  show_advanced_prefs = (_GET['show_advanced_prefs'] == '1')
+ end
+
    page_utils.print_page_title(i18n("prefs.runtime_prefs"))
 
    if(false) then
@@ -166,15 +180,6 @@ if(haveAdminPrivileges()) then
       io.write("-------- POST ---------------\n")
       tprint(_POST)
       io.write("-----------------------\n")
-   end
-
-   if toboolean(_POST["show_advanced_prefs"]) ~= nil then
-      ntop.setPref(show_advanced_prefs_key, _POST["show_advanced_prefs"])
-      show_advanced_prefs = toboolean(_POST["show_advanced_prefs"])
-      notifyNtopng(show_advanced_prefs_key, _POST["show_advanced_prefs"])
-   else
-      show_advanced_prefs = toboolean(ntop.getPref(show_advanced_prefs_key))
-      if isEmptyString(show_advanced_prefs) then show_advanced_prefs = false end
    end
 
    if hasAlertsDisabled() then
@@ -280,62 +285,6 @@ function printAlerts()
     hidden = not showElements or subpage_active.entries["toggle_mysql_check_open_files_limit"].hidden,
   })
 
-  print('<thead class="thead-light"><tr id="row_alerts_security_header" ')
-  if (showElements == false) then print(' style="display:none;"') end
-  print('><th colspan=2 class="info">'..i18n("prefs.security_alerts")..'</th></tr></thead>')
-
-  prefsToggleButton(subpage_active, {
-  field = "toggle_ip_reassignment_alerts",
-  pref = "ip_reassignment_alerts",
-  default = "0",
-  hidden = not showElements,
-  })
-
-  prefsToggleButton(subpage_active, {
-    field = "toggle_remote_to_remote_alerts",
-    pref = "remote_to_remote_alerts",
-    default = "0",
-    hidden = not showElements,
-  })
-
-  print('<thead class="thead-light"><tr id="row_alerts_informative_header" ')
-  if (showElements == false) then print(' style="display:none;"') end
-  print('><th colspan=2 class="info">'..i18n("prefs.status_alerts")..'</th></tr></thead>')
-
-  prefsToggleButton(subpage_active, {
-      field = "toggle_device_first_seen_alert",
-      pref = "device_first_seen_alert",
-      default = "0",
-      hidden = not showElements,
-      redis_prefix = "ntopng.prefs.alerts.",
-    })
-
-  prefsToggleButton(subpage_active, {
-      field = "toggle_device_activation_alert",
-      pref = "device_connection_alert",
-      default = "0",
-      hidden = not showElements,
-      redis_prefix = "ntopng.prefs.alerts.",
-    })
-
-  prefsToggleButton(subpage_active, {
-      field = "toggle_pool_activation_alert",
-      pref = "pool_connection_alert",
-      default = "0",
-      hidden = not showElements,
-      redis_prefix = "ntopng.prefs.alerts.",
-    })
-
-  if ntop.isnEdge() then
-    prefsToggleButton(subpage_active, {
-      field = "toggle_quota_exceeded_alert",
-      pref = "quota_exceeded_alert",
-      default = "0",
-      hidden = not showElements,
-      redis_prefix = "ntopng.prefs.alerts.",
-    })
-  end
-
   print('<thead class="thead-light"><tr id="row_alerts_retention_header" ')
   if (showElements == false) then print(' style="display:none;"') end
   print('><th colspan=2 class="info">'..i18n("prefs.alerts_retention")..'</th></tr></thead>')
@@ -361,7 +310,7 @@ function printAlerts()
       params.flush_alerts_data = "";
       params.csrf = "]] print(ntop.getRandomCSRFValue()) print[[";
 
-      var form = paramsToForm('<form method="post"></form>', params);
+      var form = NtopUtils.paramsToForm('<form method="post"></form>', params);
       form.appendTo('body').submit();
     }
   </script>
@@ -872,7 +821,7 @@ function printAuthentication()
     prefsInformativeField(i18n("notes"), i18n("prefs.auth_methods_order"))
   else
     prefsInformativeField(i18n("notes"), i18n("nedge.authentication_gui_and_captive_portal",
-      {product = product, url = ntop.getHttpPrefix() .. "/lua/pro/nedge/system_setup/captive_portal.lua"}))
+      {product = product, url = ntop.getHttpPrefix() .. "/lua/pro/nedge/system_setup_ui/captive_portal.lua"}))
   end
 
   print('<tr><th colspan=2 style="text-align:right;"><button type="submit" class="btn btn-primary" style="width:115px" disabled="disabled">'..i18n("save")..'</button></th></tr>')
@@ -1080,14 +1029,13 @@ function printStatsTimeseries()
 
   multipleTableButtonPrefs(subpage_active.entries["timeseries_resolution_resolution"].title,
 				    subpage_active.entries["timeseries_resolution_resolution"].description .. "<br><b>" .. i18n("notes") .. [[</b>:<ul>
-      <li>]] .. i18n("prefs.ts_resolution_note1", {url="prefs.lua?tab=retention"}) .. [[</li>
       <li>]] .. i18n("prefs.ts_resolution_note2", {
         external_icon = "<i class='fas fa-external-link-alt'></i>",
         url="https://docs.influxdata.com/influxdb/v1.8/query_language/manage-database/#delete-a-database-with-drop-database"
       }) .. [[</li>
       </ul>]],
 				    resolutions_labels, resolutions_values,
-				    "60",
+				    "300",
 				    "primary",
 				    "ts_high_resolution",
 				    "ntopng.prefs.ts_resolution", nil,
@@ -1243,7 +1191,7 @@ function printStatsTimeseries()
   end
 
   if info["version.enterprise_edition"] then
-    prefsInformativeField("SNMP", i18n("prefs.snmp_timeseries_config_link", {url="?tab=snmp"}))
+    prefsInformativeField("SNMP", i18n("prefs.snmp_timeseries_config_link", {url="?tab=snmp&show_advanced_prefs=1"}))
   end
 
   prefsToggleButton(subpage_active, {
@@ -1373,8 +1321,6 @@ function printDumpSettings()
        "row_toggle_tiny_flows_dump",
        "max_num_packets_per_tiny_flow",
        "max_num_bytes_per_tiny_flow",
-       "row_toggle_aggregated_flows_export_limit",
-       "max_num_aggregated_flows_per_export",
     },
     -- Similar to "to_switch" but for nested items (e.g. "local hosts cache" only
     -- enabled when both "host cache" and "cache" are enabled).
@@ -1386,7 +1332,6 @@ function printDumpSettings()
       -- pref_enabled_value: this preference value that should make the child input visible (e.g. "1" when "cache" is enabled)
       {input="max_num_packets_per_tiny_flow", parent="input-toggle_tiny_flows_dump", parent_enabled_value="1", pref_enabled_value="1"},
       {input="max_num_bytes_per_tiny_flow", parent="input-toggle_tiny_flows_dump", parent_enabled_value="1", pref_enabled_value="1"},
-      {input="max_num_aggregated_flows_per_export", parent="input-toggle_aggregated_flows_export_limit", parent_enabled_value="1", pref_enabled_value="1"},
     },
    })
 
@@ -1418,25 +1363,6 @@ function printDumpSettings()
 			prefs.max_num_bytes_per_tiny_flow, "number",
 			showTinyElements,
 			false, nil, {min=1, max=2^32-1})
-
-   prefsToggleButton(subpage_active, {
-			field = "toggle_aggregated_flows_export_limit",
-			default = "0",
-			pref = "aggregated_flows_export_limit_enabled",
-			to_switch = {
-			   "max_num_aggregated_flows_per_export"
-			},
-			hidden = not showAllElements,
-   })
-
-   local showAggrElements = showAllElements and ntop.getPref("ntopng.prefs.aggregated_flows_export_limit_enabled") == "1"
-
-   prefsInputFieldPrefs(subpage_active.entries["max_num_aggregated_flows_per_export"].title,
-			subpage_active.entries["max_num_aggregated_flows_per_export"].description,
-			"ntopng.prefs.", "max_num_aggregated_flows_per_export",
-			prefs.max_num_aggregated_flows_per_export, "number",
-			showAggrElements, false, nil,
-			{min = 1000, max = 2^32-1})
 
    print('<tr><th colspan=2 style="text-align:right;"><button type="submit" class="btn btn-primary" style="width:115px" disabled="disabled">'..i18n("save")..'</button></th></tr>')
 
@@ -1470,45 +1396,27 @@ print[[
 
 printMenuSubpages(tab)
 
-print[[
+local simple_view_class = (show_advanced_prefs and 'btn-secondary' or 'btn-primary active')
+local expert_view_class = (show_advanced_prefs and 'btn-primary active' or 'btn-secondary')
+
+print([[
            </div>
-           <br>
-           <div align="center">
+           <div class="text-center">
 
             <div id="prefs_toggle" class="btn-group">
-              <form method="post">
-<input name="csrf" type="hidden" value="]] print(ntop.getRandomCSRFValue()) print [[" />
-<input type=hidden name="show_advanced_prefs" value="]]if show_advanced_prefs then print("false") else print("true") end print[["/>
-
-
-<br>
-<div class="btn-group btn-toggle">
-]]
-
-local cls_on      = "btn btn-sm"
-local onclick_on  = ""
-local cls_off     = cls_on
-local onclick_off = onclick_on
-if show_advanced_prefs then
-   cls_on  = cls_on..' btn-primary active'
-   cls_off = cls_off..' btn-secondary'
-   onclick_off = "this.form.submit();"
-else
-   cls_on = cls_on..' btn-secondary'
-   cls_off = cls_off..' btn-primary active'
-   onclick_on = "this.form.submit();"
-end
-print('<button type="button" class="'..cls_on..'" onclick="'..onclick_on..'">'..i18n("prefs.expert_view")..'</button>')
-print('<button type="button" class="'..cls_off..'" onclick="'..onclick_off..'">'..i18n("prefs.simple_view")..'</button>')
-
-print[[
-</div>
+              <form method='post'>
+                <input name="csrf" type="hidden" value="]].. ntop.getRandomCSRFValue() ..[[" />
+                <div class="btn-group btn-toggle mt-2">
+                  <button class='btn btn-sm ]].. expert_view_class ..[[' name='show_advanced_prefs' value='true'>]].. i18n("prefs.expert_view") ..[[</button>
+                  <button class='btn btn-sm ]].. simple_view_class ..[[' name='show_advanced_prefs' value='false'>]].. i18n("prefs.simple_view") ..[[</button>
+                </div>
               </form>
 
             </div>
 
            </div>
-
+]])
+print[[
         </td><td colspan=2 style="padding-left: 14px;border-left-style: groove; border-width:1px; border-color: #e0e0e0;">]]
 
 if(tab == "report") then
@@ -1595,10 +1503,5 @@ aysHandleForm("form", {
 /* Use the validator plugin to override default chrome bubble, which is displayed out of window */
 $("form[id!='search-host-form']").validator({disable:true});
 </script>]])
-
-if(_SERVER["REQUEST_METHOD"] == "POST") then
-   -- Something has changed
-  ntop.reloadPreferences()
-end
 
 end --[[ haveAdminPrivileges ]]

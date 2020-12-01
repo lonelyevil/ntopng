@@ -324,21 +324,21 @@ var host_details_interval = window.setInterval(function() {
     /* error: function(content) { alert("]] print(i18n("mac_details.json_error_inactive", {product=info["product"]})) print[["); }, */
     success: function(content) {
       var host = jQuery.parseJSON(content);
-      $('#first_seen').html(epoch2Seen(host["seen.first"]));
-      $('#last_seen').html(epoch2Seen(host["seen.last"]));
-      $('#pkts_sent').html(formatPackets(host["packets.sent"]));
-      $('#pkts_rcvd').html(formatPackets(host["packets.rcvd"]));
-      $('#bytes_sent').html(bytesToVolume(host["bytes.sent"]));
-      $('#bytes_rcvd').html(bytesToVolume(host["bytes.rcvd"]));
-      $('#arp_requests_sent').html(addCommas(host["arp_requests.sent"]));
-      $('#arp_requests_rcvd').html(addCommas(host["arp_requests.rcvd"]));
-      $('#arp_replies_sent').html(addCommas(host["arp_replies.sent"]));
-      $('#arp_replies_rcvd').html(addCommas(host["arp_replies.rcvd"]));
+      $('#first_seen').html(NtopUtils.epoch2Seen(host["seen.first"]));
+      $('#last_seen').html(NtopUtils.epoch2Seen(host["seen.last"]));
+      $('#pkts_sent').html(NtopUtils.formatPackets(host["packets.sent"]));
+      $('#pkts_rcvd').html(NtopUtils.formatPackets(host["packets.rcvd"]));
+      $('#bytes_sent').html(NtopUtils.bytesToVolume(host["bytes.sent"]));
+      $('#bytes_rcvd').html(NtopUtils.bytesToVolume(host["bytes.rcvd"]));
+      $('#arp_requests_sent').html(NtopUtils.addCommas(host["arp_requests.sent"]));
+      $('#arp_requests_rcvd').html(NtopUtils.addCommas(host["arp_requests.rcvd"]));
+      $('#arp_replies_sent').html(NtopUtils.addCommas(host["arp_replies.sent"]));
+      $('#arp_replies_rcvd').html(NtopUtils.addCommas(host["arp_replies.rcvd"]));
 ]]
    if interface.isBridgeInterface(ifstats) then
 print[[
       if(host["flows.dropped"] > 0) {
-        $('#bridge_dropped_flows').html(addCommas(host["flows.dropped"]));
+        $('#bridge_dropped_flows').html(NtopUtils.addCommas(host["flows.dropped"]));
 
         $('#bridge_dropped_flows_tr').show();
       } else {

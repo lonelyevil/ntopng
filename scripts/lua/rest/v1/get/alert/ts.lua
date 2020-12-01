@@ -15,14 +15,14 @@ local rest_utils = require("rest_utils")
 
 --
 -- Read alerts data as timeseries (number of alerts per hour)
--- Example: curl -u admin:admin -d '{"ifid": "6", "status": "historical-flows", "epoch_begin": 1590226522, "epoch_end": 1590485722}' http://localhost:3000/lua/rest/v1/get/alert/ts.lua
+-- Example: curl -u admin:admin -H "Content-Type: application/json" -d '{"ifid": "6", "status": "historical-flows", "epoch_begin": 1590226522, "epoch_end": 1590485722}' http://localhost:3000/lua/rest/v1/get/alert/ts.lua
 --
 -- NOTE: in case of invalid login, no error is returned but redirected to login
 --
 
 sendHTTPHeader('application/json')
 
-local rc = rest_utils.consts_ok
+local rc = rest_utils.consts.success.ok
 local res = {}
 
 local ifid = _GET["ifid"]
@@ -33,7 +33,7 @@ local alert_type = _GET["alert_type"]
 local alert_severity = _GET["alert_severity"]
 
 if isEmptyString(ifid) then
-   rc = rest_utils.consts_invalid_interface
+   rc = rest_utils.consts.err.invalid_interface
    print(rest_utils.rc(rc))
    return
 end
@@ -41,13 +41,13 @@ end
 interface.select(ifid)
 
 if isEmptyString(what) then
-   rc = rest_utils.consts_invalid_args
+   rc = rest_utils.consts.err.invalid_args
    print(rest_utils.rc(rc))
    return
 end
 
 if isEmptyString(epoch_begin) or isEmptyString(epoch_end) then
-   rc = rest_utils.consts_invalid_args
+   rc = rest_utils.consts.err.invalid_args
    print(rest_utils.rc(rc))
    return
 end
@@ -56,7 +56,7 @@ epoch_begin = tonumber(epoch_begin);
 epoch_end = tonumber(epoch_end);
 
 if epoch_end <= epoch_begin then
-   rc = rest_utils.consts_invalid_args
+   rc = rest_utils.consts.err.invalid_args
    print(rest_utils.rc(rc))
    return
 end
@@ -80,7 +80,7 @@ end
 local counters = alert_utils.getNumAlertsPerHour(what, epoch_begin, epoch_end, alert_type, alert_severity)
 
 if counters == nil then
-   rc = rest_utils.consts_internal_error
+   rc = rest_utils.consts.err.internal_error
    print(rest_utils.rc(rc)) 
    return
 end

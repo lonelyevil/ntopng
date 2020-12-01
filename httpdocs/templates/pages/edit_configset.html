@@ -7,58 +7,102 @@
 </div>
 {% else %}
 
-<div class="container-fluid mt-3">
   <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
       <li class="breadcrumb-item" aria-current="page">
-          <i class="fab fa-superpowers"></i>
-          {{ i18n("about.user_scripts", {}) }}
+        <i class="fab fa-superpowers"></i>
+        {{ i18n("about.user_scripts", {}) }}
       </li>
       <li class="breadcrumb-item" aria-current="page">
         <a href="/lua/admin/scripts_config.lua?subdir={{ script_list.script_subdir }}">
           {{ script_list.hooks_localizated[script_list.script_subdir] }}
         </a>
       </li>
+      {% if not isEmptyString(script_list.search_filter) then %}
+      <li class="breadcrumb-item active" aria-current="page">
+        <a href='{{ ntop.getHttpPrefix() }}/lua/admin/edit_configset.lua?confset_id={{script_list.confset_id}}&subdir={{script_list.script_subdir}}'>{{ i18n("scripts_list.config", {}) }} {{ script_list.confset_name }}</a>
+      </li>
+        <li class="breadcrumb-item active">
+          {{ i18n("search") }}: <b>{{ script_list.search_filter }}</b>
+        </li>
+      {% else %}
       <li class="breadcrumb-item active" aria-current="page">
         {{ i18n("scripts_list.config", {}) }}
         <b>{{ script_list.confset_name }}</b>
       </li>
+      {% end %}
     </ol>
   </nav>
   <div class="row">
     <div class="col-md-12 col-lg-12 mt-3">
       <div class="alert alert-danger d-none" id='alert-row-buttons' role="alert">
       </div>
-      <table
-        id="scripts-config"
-        class="table w-100 table-striped table-hover table-bordered mt-3">
-        <thead>
-          <tr>
-            <th>{{ i18n("name", {}) }}</th>
-            <th>{{ i18n("category", {}) }}</th>
-            <th>{{ i18n("description", {}) }}</th>
-            <th>{{ i18n("values", {}) }}</th>
-            <th style="width: 200px">{{ i18n("action", {})}}</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+      <div class="card">
+        {% if isEmptyString(script_list.search_filter) then %}
+        <div class="card-header">
+          <ul class="nav nav-tabs card-header-tabs">
+            <li class="nav-item">
+              <a id="all-scripts" class="nav-link filter-scripts-button" href="#all">{{ i18n("all") }}</a>
+            </li>
+            <li class="nav-item">
+              <a id="enabled-scripts" class="nav-link filter-scripts-button" href="#enabled">{{ i18n("enabled") }}</a>
+            </li>
+            <li class="nav-item">
+              <a id ="disabled-scripts" class="nav-link filter-scripts-button" href="#disabled">{{ i18n("disabled") }}</a>
+            </li>
+          </ul>
+        </div>
+        {% end %}
+        <div class="card-body">
+          <table id="scripts-config" class="table w-100 table-striped table-hover table-bordered mt-3">
+            <thead>
+              <tr>
+                <th>{{ i18n("name", {}) }}</th>
+                <th>{{ i18n("category", {}) }}</th>
+                <th>{{ i18n("description", {}) }}</th>
+                <th>{{ i18n("values", {}) }}</th>
+                <th style="width: 200px">{{ i18n("action", {})}}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        {% if isEmptyString(script_list.search_filter) then %}
+        <div class="card-footer">
+          <button id='btn-disable-all' disabled class="btn btn-danger" data-toggle="modal" data-target="#disable-all-modal">
+            <i class='fas fa-toggle-off'></i> {{ i18n("user_scripts.disable_all") }}</button>
+        </div>
+        {% end %}
+      </div>
     </div>
   </div>
-  <br>
-  <div>
+  <div class='notes bg-light border'>
     <b>{{ i18n('notes') }}</b>
     <ul>
       <li> {{ i18n('user_scripts.categories') }}
-	<ul>
-	  {% for _, cat in pairsByKeys(script_categories) do %}
-	  <li> {* string.format("<i class='fa %s'></i> %s: %s", cat.icon, i18n(cat.i18n_title, {product=info.product}), i18n(cat.i18n_descr, {product=info.product})) *} </li>
-	  {% end %}
-	</ul>
+        <ul>
+          {% for _, cat in pairsByKeys(script_categories) do %}
+          <li> {* string.format("<i class='fa %s'></i> %s: %s", cat.icon, i18n(cat.i18n_title, {product=info.product}),
+            i18n(cat.i18n_descr, {product=info.product})) *} </li>
+          {% end %}
+        </ul>
       </li>
     </ul>
   </div>
-</div>
+
+{*
+  script_list.template_utils.gen("modal_confirm_dialog.html", {
+      dialog={
+          id = "disable-all-modal",
+          message = i18n('user_scripts.disable_all_message'),
+          title = i18n('user_scripts.disable_all_user_scripts'),
+          confirm = i18n("user_scripts.disable_all"),
+          custom_alert_class = 'alert alert-danger',
+          confirm_button = 'btn-danger',
+      }
+  })
+*}
+
 
 {# include modals for edit_configset.lua #}
 {* script_list.template_utils.gen("pages/modals/edit_configset/edit_config_modal.html") *}
@@ -83,11 +127,11 @@ const scripts_categories = [
 ];
 
 let pageCsrf = "{{ ntop.getRandomCSRFValue() }}";
+const script_search_filter = "{{ script_list.search_filter }}";
 let script_key_filter = "{{ script_list.script_filter }}";
 let page_url = "{* script_list.page_url *}";
 let apps_and_categories = {* script_list.apps_and_categories *};
 let device_types = {* script_list.device_types *};
-let mud_max_recording = {* script_list.mud_max_recording *};
 
 i18n.all = '{{ i18n("all", {}) }}';
 i18n.enabled = '{{ i18n("enabled", {}) }}';
@@ -110,8 +154,6 @@ i18n.script_search = "{{ i18n('scripts_list.script_search') }}";
 i18n.scripts_list = {};
 i18n.scripts_list.templates = {};
 i18n.scripts_list.templates.excluded_applications = "{{ i18n('scripts_list.templates.excluded_applications') }}";
-i18n.scripts_list.templates.mud_enabled_devices = "{{ i18n('scripts_list.templates.mud_enabled_devices') }}";
-i18n.scripts_list.templates.max_mud_recording = "{{ i18n('scripts_list.templates.max_mud_recording') }}";
 i18n.scripts_list.templates.flow_duration_threshold = "{{ i18n('scripts_list.templates.flow_duration_threshold') }}";
 i18n.scripts_list.templates.elephant_flows_l2r = "{{ i18n('scripts_list.templates.elephant_flows_l2r') }}";
 i18n.scripts_list.templates.elephant_flows_r2l = "{{ i18n('scripts_list.templates.elephant_flows_r2l') }}";
@@ -128,6 +170,7 @@ i18n.metrics.hours = "{{ i18n('metrics.hours') }}";
 i18n.metrics.days = "{{ i18n('metrics.days') }}";
 
 i18n.values = "{{ i18n('values', {}) }}";
+i18n.rest = {* json.encode(i18n('rest_consts')) *};
 
 </script>
 <script type="text/javascript" src="{{ ntop.getHttpPrefix() }}/js/config_callbacks/scripts-list-utils.js?{{ ntop.getStartupEpoch() }}"></script>

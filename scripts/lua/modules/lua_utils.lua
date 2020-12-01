@@ -2,6 +2,17 @@
 -- (C) 2014-20 - ntop.org
 --
 
+-- Hack to avoid include loops
+
+if(pragma_once_lua_utils == true) then
+   -- avoid multiple inclusions
+   return
+end
+
+pragma_once_lua_utils = true
+
+-- ###############################################
+
 dirs = ntop.getDirs()
 
 package.path = dirs.installdir .. "/scripts/lua/modules/i18n/?.lua;" .. package.path
@@ -30,12 +41,12 @@ bitsToSizeMultiplier = format_utils.bitsToSizeMultiplier
 -- ##############################################
 
 -- Note: Regexs are applied by default. Pass plain=true to disable them.
-function string.contains(String,Start,plain)
-   if type(String) ~= 'string' or type(Start) ~= 'string' then
+function string.contains(str, start, is_plain)
+   if type(str) ~= 'string' or type(start) ~= 'string' then
       return false
    end
 
-   local i,j = string.find(String, Start, 1, plain)
+   local i, _ = string.find(str, start, 1, is_plain)
 
    return(i ~= nil)
 end
@@ -44,7 +55,7 @@ end
 
 function shortenString(name, max_len)
    if(name == nil) then return("") end
-   
+
    if max_len == nil then
       max_len = ntop.getPref("ntopng.prefs.max_ui_strlen")
       max_len = tonumber(max_len)
@@ -198,40 +209,72 @@ function __LINE__() return debug.getinfo(2, 'l').currentline end
 
 -- ##############################################
 
-function sendHTTPHeaderIfName(mime, ifname, maxage, content_disposition, extra_headers)
-  info = ntop.getInfo(false)
-  local cookie_attr = ntop.getCookieAttributes()
-  local lines = {
-    'Cache-Control: max-age=0, no-cache, no-store',
-    'Server: ntopng '..info["version"]..' ['.. info["platform"]..']',
-    'Pragma: no-cache',
-    'X-Frame-Options: DENY',
-    'X-Content-Type-Options: nosniff',
-    'Content-Type: '.. mime,
-    'Last-Modified: '..os.date("!%a, %m %B %Y %X %Z"),
-  }
+local http_status_code_map = {
+  [200] = "OK",
+  [400] = "Bad Request",
+  [401] = "Unauthorized",
+  [403] = "Forbidden",
+  [404] = "Not Found",
+  [405] = "Method Not Allowed",
+  [406] = "Not Acceptable",
+  [408] = "Request timeout",
+  [409] = "Conflict",
+  [410] = "Gone",
+  [412] = "Precondition Failed",
+  [415] = "Unsupported Media Type",
+  [423] = "Locked",
+  [428] = "Precondition Required",
+  [429] = "Too many requests",
+  [500] = "Internal Server Error",
+  [501] = "Not Implemented",
+  [503] = "Service Unavailable",
+}
 
-  if(_SESSION ~= nil) then
-    lines[#lines + 1] = 'Set-Cookie: session='.._SESSION["session"]..'; max-age=' .. maxage .. '; path=/; ' .. cookie_attr
-  end
+-- ##############################################
 
-  if(ifname ~= nil) then
-    lines[#lines + 1] = 'Set-Cookie: ifname=' .. ifname .. '; path=/' .. cookie_attr
-  end
-
-  if(content_disposition ~= nil) then
-    lines[#lines + 1] = 'Content-Disposition: '..content_disposition
-  end
-
-  if type(extra_headers) == "table" then
-     for hname, hval in pairs(extra_headers) do
-        lines[#lines + 1] = hname..': '..hval
-     end
-  end
-
-  -- Buffer the HTTP reply and write it in one "print" to avoid fragmenting
-  -- it into multiple packets, to ease HTTP debugging with wireshark.
-  print("HTTP/1.1 200 OK\r\n" .. table.concat(lines, "\r\n") .. "\r\n\r\n")
+function sendHTTPHeaderIfName(mime, ifname, maxage, content_disposition, extra_headers, status_code)   
+   info = ntop.getInfo(false)
+   local cookie_attr = ntop.getCookieAttributes()
+   local lines = {
+      'Cache-Control: max-age=0, no-cache, no-store',
+      'Server: ntopng '..info["version"]..' ['.. info["platform"]..']',
+      'Pragma: no-cache',
+      'X-Frame-Options: DENY',
+      'X-Content-Type-Options: nosniff',
+      'Content-Type: '.. mime,
+      'Last-Modified: '..os.date("!%a, %m %B %Y %X %Z"),
+   }
+   
+   if(_SESSION ~= nil) then
+      lines[#lines + 1] = 'Set-Cookie: session='.._SESSION["session"]..'; max-age=' .. maxage .. '; path=/; ' .. cookie_attr
+   end
+   
+   if(ifname ~= nil) then
+      lines[#lines + 1] = 'Set-Cookie: ifname=' .. ifname .. '; path=/' .. cookie_attr
+   end
+   
+   if(content_disposition ~= nil) then
+      lines[#lines + 1] = 'Content-Disposition: '..content_disposition
+   end
+   
+   if type(extra_headers) == "table" then
+      for hname, hval in pairs(extra_headers) do
+	 lines[#lines + 1] = hname..': '..hval
+      end
+   end
+   
+   if not status_code then
+      status_code = 200
+   end
+   
+   local status_descr = http_status_code_map[status_code]
+   if not status_descr then
+      status_descr = "Unknown"
+   end
+   
+   -- Buffer the HTTP reply and write it in one "print" to avoid fragmenting
+   -- it into multiple packets, to ease HTTP debugging with wireshark.
+   print("HTTP/1.1 " .. status_code .. " " .. status_descr .. "\r\n" .. table.concat(lines, "\r\n") .. "\r\n\r\n")
 end
 
 -- ##############################################
@@ -242,17 +285,17 @@ end
 
 -- ##############################################
 
-function sendHTTPHeader(mime, content_disposition, extra_headers)
-  sendHTTPHeaderIfName(mime, nil, 3600, content_disposition, extra_headers)
+function sendHTTPHeader(mime, content_disposition, extra_headers, status_code)   
+   sendHTTPHeaderIfName(mime, nil, 3600, content_disposition, extra_headers, status_code)
 end
 
 -- ##############################################
 
-function sendHTTPContentTypeHeader(content_type, content_disposition, charset)
-
+function sendHTTPContentTypeHeader(content_type, content_disposition, charset, extra_headers, status_code)
   local charset = charset or "utf-8"
   local mime = content_type.."; charset="..charset
-  sendHTTPHeader(mime, content_disposition)
+
+  sendHTTPHeader(mime, content_disposition, extra_headers, status_code)
 end
 
 
@@ -803,19 +846,28 @@ function isBroadcastMulticast(ip)
 end
 
 function isIPv4(address)
-  local chunks = {address:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")}
 
-  if #chunks == 4 then
-    for _, v in pairs(chunks) do
-      if (tonumber(v) < 0) or (tonumber(v) > 255) then
-        return false
+   -- Reuse the for loop to check the address validity
+   local checkAddress = (function(chunks)
+      for _, v in pairs(chunks) do
+         if (tonumber(v) < 0) or (tonumber(v) > 255) then
+            return false
+         end
       end
-    end
+      return true
+   end)
 
-    return true
-  end
+   local chunks = {address:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")}
+   local chunksWithPort = {address:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)%:(%d+)$")}
 
-  return false
+   if #chunks == 4 then
+      return checkAddress(chunks)
+   elseif #chunksWithPort == 5 then
+      table.remove(chunksWithPort, 5)
+      return checkAddress(chunksWithPort)
+   end
+
+   return false
 end
 
 function isIPv4Network(address)
@@ -975,6 +1027,13 @@ function getCategoriesWithProtocols()
    return protocol_categories
 end
 
+
+--
+-- Members supported format
+-- 192.168.1.10/32@10
+-- 00:11:22:33:44:55
+-- 
+
 function isValidPoolMember(member)
   if isEmptyString(member) then
     return false
@@ -987,8 +1046,9 @@ function isValidPoolMember(member)
   -- vlan is mandatory here
   local vlan_idx = string.find(member, "@")
   if ((vlan_idx == nil) or (vlan_idx == 1)) then
-    return false
+     return false
   end
+  
   local other = string.sub(member, 1, vlan_idx-1)
   local vlan = tonumber(string.sub(member, vlan_idx+1))
   if (vlan == nil) or (vlan < 0) then
@@ -1348,16 +1408,44 @@ end
 
 -- ##############################################
 
-function getHostAltNamesKey(ip)
-   return "ntopng.cache.host_labels."..ip
+function getHostAltNamesKey(host_key)
+   if(host_key == nil) then return(nil) end
+   return "ntopng.cache.host_labels."..host_key
 end
 
-function getHostAltName(host_ip)
-   return ntop.getCache(getHostAltNamesKey(host_ip))
+function getHostAltName(host_info)
+   local host_key
+
+   if type(host_info) == "table" then
+     host_key = host_info["host"]
+   else
+     host_key = host_info
+   end
+
+   local alt_name = ntop.getCache(getHostAltNamesKey(host_key))
+
+   if isEmptyString(alt_name) and type(host_info) == "table" and host_info["vlan"] then
+      -- Check if there is an alias for the host@vlan
+      host_key = hostinfo2hostkey(host_info)
+      alt_name = ntop.getCache(getHostAltNamesKey(host_key))
+   end
+
+   return alt_name
 end
 
-function setHostAltName(host_ip, alt_name)
-   ntop.setCache(getHostAltNamesKey(host_ip), alt_name)
+function setHostAltName(host_info, alt_name)
+   local host_key
+
+   if type(host_info) == "table" then
+     -- Note: we are not using hostinfo2hostkey which includes the
+     -- vlan for backward compatibility, compatibility with
+     -- the backend, and compatibility with the vpn plugins
+     host_key = host_info["host"] -- hostinfo2hostkey(host_info)
+   else
+     host_key = host_info
+   end
+
+   ntop.setCache(getHostAltNamesKey(host_key), alt_name)
 end
 
 -- ##############################################
@@ -1535,7 +1623,10 @@ local function hostdetails_exists(host_info, hostdetails_params)
       local tags = table.merge(host_info, hostdetails_params)
       if not tags["ifid"] then tags["ifid"] = interface.getId() end
 
-      if not ts_utils.exists(hostdetails_params["ts_schema"], tags) then
+      -- If nIndex support is enabled, then there's no need to check for existence of the
+      -- schema: nIndex flows must be visible from the historical page even when there's no timeseries
+      -- associated
+      if not interfaceHasNindexSupport() and not ts_utils.exists(hostdetails_params["ts_schema"], tags) then
 	 -- If here, the requested schema, along with its hostdetails_params doesn't exist
 	 return false
       end
@@ -2211,6 +2302,11 @@ function getHumanReadableInterfaceName(interface_name)
    elseif tonumber(interface_name) ~= nil then
       -- convert ID to name
       interface_name = getInterfaceName(interface_name)
+   else
+      -- Parameter is a string, let's take it's id first
+      local interface_id = getInterfaceId(interface_name)
+      -- and then get the name
+      interface_name = getInterfaceName(interface_id)
    end
 
    local key = 'ntopng.prefs.'..interface_name..'.name'
@@ -2218,18 +2314,9 @@ function getHumanReadableInterfaceName(interface_name)
 
    if not isEmptyString(custom_name) then
       return(shortenCollapse(custom_name))
-   else
-      interface.select(interface_name)
-      local _ifstats = interface.getStats()
-
-      local nm = _ifstats.name
-      if(string.contains(nm, "{")) then -- Windows
-	 nm = _ifstats.description
-      end
-
-      -- print(interface_name.."=".._ifstats.name)
-      return(shortenCollapse(nm or ''))
    end
+
+   return interface_name
 end
 
 -- ##############################################
@@ -2363,7 +2450,7 @@ function getFlag(country)
    if((country == nil) or (country == "")) then
       return("")
    else
-      return("<a href='" .. ntop.getHttpPrefix() .. "/lua/hosts_stats.lua?country=".. country .."'><img src='".. ntop.getHttpPrefix() .. "/img/blank.gif' class='flag flag-".. string.lower(country) .."'></a>")
+      return(" <a href='" .. ntop.getHttpPrefix() .. "/lua/hosts_stats.lua?country=".. country .."'><img src='".. ntop.getHttpPrefix() .. "/img/blank.gif' class='flag flag-".. string.lower(country) .."'></a> ")
    end
 end
 
@@ -3576,10 +3663,9 @@ function generate_select(id, name, is_required, is_disabled, options, additional
    local disabled_flag = (is_disabled and "disabled" or "")
    local name_attr = (name ~= "" and "name='" .. name .. "'" or "")
    local parsed_options = ""
-
    for i, option in ipairs(options) do
       parsed_options = parsed_options .. ([[
-         <option value="]].. option.value ..[[">]].. option.title ..[[</option>
+         <option ]].. (i == 1 and "selected" or "") ..[[ value="]].. option.value ..[[">]].. option.title ..[[</option>
       ]])
    end
 
@@ -3751,9 +3837,10 @@ end
 --- @return string message If there is a new major release then return a non-nil string
 --- containing the update message.
 function check_latest_major_release()
-
    -- get the latest major release
    local latest_version = ntop.getCache("ntopng.cache.major_release")
+
+   -- tprint(debug.traceback())
 
    if isEmptyString(latest_version) then
      local rsp = ntop.httpGet("https://www.ntop.org/ntopng.version", "", "", 10 --[[ seconds ]])
@@ -3766,7 +3853,6 @@ function check_latest_major_release()
      end
 
      ntop.setCache("ntopng.cache.major_release", latest_version, 86400 --[[ recheck interval]])
-
    end
 
    return get_version_update_msg(info, latest_version)
@@ -3780,8 +3866,8 @@ function initFlowsRefreshRows()
    print[[
 datatableInitRefreshRows($("#table-flows"), "key_and_hash", 10000, {
    /* List of rows with trend icons */
-   "column_thpt": ]] print(ternary(getThroughputType() ~= "bps", "fpackets", "bitsToSize")) print[[,
-   "column_bytes": bytesToSize,
+   "column_thpt": ]] print(ternary(getThroughputType() ~= "bps", "NtopUtils.fpackets", "NtopUtils.bitsToSize")) print[[,
+   "column_bytes": NtopUtils.bytesToSize,
 });
 
 $("#dt-bottom-details > .float-left > p").first().append('. ]]
@@ -3808,6 +3894,122 @@ function canRestoreHost(ifid, ip, vlan)
 end
 
 -- ###########################################
+
+--- Test if each element inside the table t satisfies the predicate function
+--- @param t table The table containing values to test
+--- @param predicate function The function that return a boolean value (true|false)
+--- @return boolean
+function table.all(t, predicate)
+
+   if type(t) ~= 'table' then
+      traceError(TRACE_DEBUG, TRACE_CONSOLE, "the first paramater is not a table!")
+      return false
+   end
+   if type(predicate) ~= 'function' then
+      traceError(TRACE_DEBUG, TRACE_CONSOLE, "the passed predicate is not a function!")
+      return false
+   end
+
+   if t == nil then return false end
+
+   for _, value in pairs(t) do
+
+      -- check if the value satisfies the boolean predicate
+      local term = predicate(value)
+
+      -- if the return value is valid and true then do nothing
+      -- otherwise stop the loop and return false
+      if term == nil then
+         -- inform the client about the nil value
+         traceError(TRACE_DEBUG, TRACE_CONSOLE, "a null term has been returned from the predicate function!")
+         return false
+      elseif not term then
+         return false
+      end
+   end
+
+   -- each entry satisfies the predicate
+   return true
+end
+
+-- ###########################################
+
+--- Perform a linear search to check if an element is inside a table
+--- @param t table The table to scan
+--- @param needle any The element to search
+--- @param comp function The compare function used to compare the searched element with others
+--- @return boolean True if the element is insie the table, False otherwise
+function table.contains(t, needle, comp)
+
+   if (t == nil) then return false end
+   if (type(t) ~= "table") then return false end
+   if (#t == 0) then return false end
+
+   local default_compare = (function(e) return e == needle end)
+   comp = comp or default_compare
+
+   for _, element in ipairs(t) do
+      if comp(element) then return true end
+   end
+
+   return false
+end
+
+-- ###########################################
+
+--- Insert an element inside the table if is not present
+function table.insertIfNotPresent(t, element, comp)
+   if table.contains(t, element, comp) then return end
+   t[#t+1] = element
+end
+
+-- ###########################################
+
+--- Fold right table with a custom function
+--- @param t table Table to fold
+--- @param func function Function to execute on table values
+--- @param val any The returned default value
+function table.foldr(t, func, val)
+   for i,v in pairs(t) do
+       val = func(val, v)
+   end
+   return val
+end
+
+-- ###########################################
+
+function table.has_key(table, key)
+   return table[key] ~= nil
+end
+
+-- ###########################################
+
+local cache = {}
+
+function buildHostHREF(ip_address, vlan_id, page)
+   local stats = cache[ip_address]
+
+   if(stats == nil) then
+      stats = interface.getHostInfo(ip_address, vlan_id)
+      cache[ip_address] = { stats = stats }
+   else
+      stats = stats.stats
+   end
+
+   if(stats == nil) then
+      return(ip_address)
+   else
+      local name = stats.name
+      local res
+
+      if((name == nil) or (name == "")) then name = ip_address end
+      res = '<A HREF="'..ntop.getHttpPrefix()..'/lua/host_details.lua?host='..ip_address
+      if(vlan_id and (vlan_id ~= 0)) then res = res .. "@"..vlan_id end
+      res = res  ..'&page='..page..'">'..name..'</A>'
+
+      return(res)
+   end
+end
 
 --
 -- IMPORTANT

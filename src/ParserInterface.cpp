@@ -39,7 +39,7 @@ ParserInterface::~ParserInterface() {
 
 /* **************************************************** */
 
-void ParserInterface::processFlow(ParsedFlow *zflow) {
+bool ParserInterface::processFlow(ParsedFlow *zflow) {
   bool src2dst_direction, new_flow;
   Flow *flow;
   ndpi_protocol p = Flow::ndpiUnknownProtocol;
@@ -65,7 +65,7 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
     if(isProbingFlow(zflow)) {
       discardedProbingStats.inc(zflow->pkt_sampling_rate * (zflow->in_pkts + zflow->out_pkts),
 				zflow->pkt_sampling_rate * (zflow->in_bytes + zflow->out_bytes));
-      return;
+      return false;
     }
   }
 
@@ -94,26 +94,31 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
 
       switch(flowHashingMode) {
       case flowhashing_probe_ip:
-        vIface = getDynInterface((u_int32_t)zflow->device_ip, true);
+        vIface = getDynInterface((u_int64_t)zflow->device_ip, true);
         break;
 
       case flowhashing_iface_idx:
-        if(flowHashingIgnoredInterfaces.find((u_int32_t)zflow->outIndex) == flowHashingIgnoredInterfaces.end())
-	  vIfaceEgress = getDynInterface((u_int32_t)zflow->outIndex, true);
+        if(flowHashingIgnoredInterfaces.find((u_int64_t)zflow->outIndex) == flowHashingIgnoredInterfaces.end())
+	  vIfaceEgress = getDynInterface((u_int64_t)zflow->outIndex, true);
         /* No break HERE, want to get two interfaces, one for the ingress
            and one for the egress. */
 
       case flowhashing_ingress_iface_idx:
-        if(flowHashingIgnoredInterfaces.find((u_int32_t)zflow->inIndex) == flowHashingIgnoredInterfaces.end())
-	  vIface = getDynInterface((u_int32_t)zflow->inIndex, true);
+        if(flowHashingIgnoredInterfaces.find((u_int64_t)zflow->inIndex) == flowHashingIgnoredInterfaces.end())
+	  vIface = getDynInterface((u_int64_t)zflow->inIndex, true);
         break;
 
+      case flowhashing_probe_ip_and_ingress_iface_idx:
+	// ntop->getTrace()->traceEvent(TRACE_NORMAL, "[IP: %u][inIndex: %u]", zflow->device_ip, zflow->inIndex);
+	vIface = getDynInterface((((u_int64_t)zflow->device_ip) << 32) + zflow->inIndex, true);
+      break;
+      
       case flowhashing_vrfid:
-        vIface = getDynInterface((u_int32_t)zflow->vrfId, true);
+        vIface = getDynInterface((u_int64_t)zflow->vrfId, true);
         break;
 
       case flowhashing_vlan:
-        vIface = getDynInterface((u_int32_t)zflow->vlan_id, true);
+        vIface = getDynInterface((u_int64_t)zflow->vlan_id, true);
         break;
 
       default:
@@ -133,8 +138,9 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
       processed = true;
     }
 
-    if (processed && !showDynamicInterfaceTraffic())
-      return;
+    if(processed && !showDynamicInterfaceTraffic()) {
+      return true;
+    }
   }
 
   if(!ntop->getPrefs()->do_ignore_macs()) {
@@ -161,8 +167,9 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
 
   PROFILING_SECTION_EXIT(0);
 
-  if(flow == NULL)
-    return;
+  if(flow == NULL) {
+    return false;
+  }
 
   if(zflow->absolute_packet_octet_counters) {
     /* Ajdust bytes and packets counters if the zflow update contains absolute values.
@@ -223,6 +230,10 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
   if(zflow->tcp.serverNwLatency.tv_sec || zflow->tcp.serverNwLatency.tv_usec)
     flow->setFlowNwLatency(&zflow->tcp.serverNwLatency, !src2dst_direction);
 
+  if(zflow->tcp.in_window)  flow->setFlowTcpWindow(zflow->tcp.in_window, src2dst_direction);
+  if(zflow->tcp.out_window) flow->setFlowTcpWindow(zflow->tcp.out_window, !src2dst_direction);
+
+  flow->setRisk(zflow->ndpi_flow_risk_bitmap);
   flow->setTOS(zflow->src_tos, true), flow->setTOS(zflow->dst_tos, false);
   flow->setRtt();
 
@@ -237,7 +248,7 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
     flow->updateSeen();
   }
 
-  flow->setFlowDevice(zflow->device_ip,
+  flow->setFlowDevice(zflow->device_ip, zflow->deviceId,
 		      src2dst_direction ? zflow->inIndex  : zflow->outIndex,
 		      src2dst_direction ? zflow->outIndex : zflow->inIndex);
 
@@ -301,7 +312,7 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
   if(zflow->device_ip) {
     // if(ntop->getPrefs()->is_flow_device_port_rrd_creation_enabled() && ntop->getPro()->has_valid_license()) {
     if(!flow_interfaces_stats)
-      flow_interfaces_stats = new FlowInterfacesStats();
+      flow_interfaces_stats = new (std::nothrow) FlowInterfacesStats();
 
     if(flow_interfaces_stats) {
       flow_interfaces_stats->incStats(now, zflow->device_ip, zflow->inIndex,
@@ -428,8 +439,23 @@ void ParserInterface::processFlow(ParsedFlow *zflow) {
 	   zflow->pkt_sampling_rate*(zflow->in_bytes + zflow->out_bytes),
 	   zflow->pkt_sampling_rate*(zflow->in_pkts + zflow->out_pkts));
 
+#ifdef NTOPNG_PRO
+  /* Check if direct flow dump is enabled */
+  if(ntop->getPrefs()->do_dump_flows_direct() && (
+     ntop->getPrefs()->is_flows_dump_enabled()
+#ifndef HAVE_NEDGE
+     || ntop->get_export_interface()
+#endif
+     )) {
+    /* Dump flow */
+    flow->dumpFlow(zflow->last_switched, true /* last dump before free */);
+  }
+#endif
+
   /* purge is actually performed at most one time every FLOW_PURGE_FREQUENCY */
   // purgeIdle(zflow->last_switched);
+
+  return true;
 }
 
 /* **************************************************** */

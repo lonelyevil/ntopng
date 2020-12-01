@@ -12,6 +12,7 @@ local graph_utils = require "graph_utils"
 local tcp_flow_state_utils = require("tcp_flow_state_utils")
 local format_utils = require("format_utils")
 local flow_consts = require "flow_consts"
+local alert_consts = require "alert_consts"
 local json = require("dkjson")
 
 if ntop.isPro() then
@@ -33,6 +34,18 @@ function formatInterfaceId(id, idx, snmpdevice)
 	 return(id)
       end
    end
+end
+
+-- #######################
+
+function formatTrafficProfile(profile)
+   local res = ""
+
+   if not isEmptyString(profile) then
+      res = "<span class='badge badge-primary'>"..profile.."</span> "
+   end
+
+   return res
 end
 
 -- #######################
@@ -81,6 +94,7 @@ function getFlowsFilter()
    local icmp_type   = _GET["icmp_type"]
    local icmp_code   = _GET["icmp_cod"]
    local flow_status = _GET["flow_status"]
+   local flow_status_severity = _GET["flow_status_severity"]
    local deviceIP    = _GET["deviceIP"]
    local inIfIdx     = _GET["inIfIdx"]
    local outIfIdx    = _GET["outIfIdx"]
@@ -184,16 +198,21 @@ function getFlowsFilter()
    if not isEmptyString(flow_status) then
       if flow_status == "normal" then
 	 pageinfo["alertedFlows"] = false
-	 pageinfo["misbehavingFlows"] = false
 	 pageinfo["filteredFlows"] = false
-      elseif flow_status == "misbehaving" then
-	 pageinfo["misbehavingFlows"] = true
       elseif flow_status == "alerted" then
 	 pageinfo["alertedFlows"] = true
       elseif flow_status == "filtered" then
 	 pageinfo["filteredFlows"] = true
       else
 	 pageinfo["statusFilter"] = tonumber(flow_status)
+      end
+   end
+
+   if not isEmptyString(flow_status_severity) then
+      local s = alert_consts.severity_groups[flow_status_severity]
+
+      if s then
+	 pageinfo["statusSeverityFilter"] = s.severity_group_id
       end
    end
 
@@ -260,6 +279,8 @@ function handleCustomFlowField(key, value, snmpdevice)
       return(formatInterfaceId(value, "inIfIdx", snmpdevice))
    elseif key == 'OUTPUT_SNMP' then
       return(formatInterfaceId(value, "outIfIdx", snmpdevice))
+   elseif key == 'TOTAL_FLOWS_EXP' then
+      return(format_utils.formatValue(value))
    elseif key == 'EXPORTER_IPV4_ADDRESS' or
           key == 'NPROBE_IPV4_ADDRESS' then
       local hinfo = hostkey2hostinfo(value)
@@ -525,6 +546,11 @@ local function formatFlowHost(flow, cli_or_srv, historical_bounds, hyperlink_suf
   if(flow[cli_or_srv ..  ".blacklisted"] == true) then
      host_name = host_name.." <i class='fas fa-ban' aria-hidden='true' title='Blacklisted'></i>"
   end
+  if(flow[cli_or_srv .. ".localhost"] == true) then
+     host_name = host_name .. ' <span class="badge badge-success">'..i18n("details.label_local_host")..'</span>'
+  else 
+     host_name = host_name .. ' <span class="badge badge-secondary">'..i18n("details.label_remote")..'</span>'
+  end
 
   return hostinfo2detailshref(flow2hostinfo(flow, cli_or_srv), hyperlink_params, host_name, nil, true --[[ perform link existance checks --]])
 end
@@ -643,6 +669,7 @@ function getFlowKey(name)
       -- TODO: currently rtemplate is flat and PENs are ignored, we should add PEN there
 
       local pen, field = name:match("^(%d+)%.(%d+)$")
+
       local v = (rtemplate[tonumber(name)] or rtemplate[tonumber(field)])
       if(v == nil) then
 	 return(name)
@@ -976,11 +1003,11 @@ function getSIPTableRows(info)
      -- TODO: fix
      if tonumber(rtp_flow_key) ~= nil and interface.findFlowByKeyAndHashId(tonumber(rtp_flow_key), 0) ~= nil then
 	string_table = string_table..'&nbsp;'
-	string_table = string_table.."<A HREF=\""..ntop.getHttpPrefix().."/lua/flow_details.lua?flow_key="..rtp_flow_key
+	string_table = string_table.."<A class='btn btn-sm btn-info' HREF=\""..ntop.getHttpPrefix().."/lua/flow_details.lua?flow_key="..rtp_flow_key
 	string_table = string_table.."&label="..sip_rtp_src_address_ip..":"..sip_rtp_src_port
 	string_table = string_table.." <-> "
 	string_table = string_table..sip_rtp_dst_address_ip..":"..sip_rtp_dst_port.."\">"
-	string_table = string_table..'<span class="badge badge-info">'..i18n("flow_details.rtp_flow")..'</span></a>'
+	string_table = string_table..'<i class="fas fa-search-plus"></i></a>'
      end
      string_table = string_table.."</div></td></tr>\n"
 
@@ -1319,55 +1346,57 @@ end
 -- #######################
 
 function printFlowSNMPInfo(snmpdevice, input_idx, output_idx)
-   if not ntop.isPro() then
-      return
-   end
+   local printed = false
+   
+   -- Make sure indices are strings as snmp_utils handles them as strings
+   input_idx = tostring(input_idx)
+   output_idx = tostring(output_idx)
 
-   if not isEmptyString(snmpdevice) then
+   if ntop.isPro() then
+      if not isEmptyString(snmpdevice) then
+	 local snmp_cached_dev = require "snmp_cached_dev"
+	 local cached_device = snmp_cached_dev:create(snmpdevice)  
+	 
+	 if cached_device and cached_device["interfaces"] and table.len(cached_device["interfaces"]) > 0 then
+	    local snmpurl = "<A HREF='" .. ntop.getHttpPrefix() .. "/lua/pro/enterprise/snmp_device_details.lua?host="..snmpdevice.. "'>"..snmpdevice.."</A>"
 
-      local snmp_cached_dev = require "snmp_cached_dev"
-      local cached_device = snmp_cached_dev:create(snmpdevice)
+	    local snmp_interfaces = cached_device["interfaces"]
+	    local inputurl, outputurl
 
-      if cached_device and cached_device["interfaces"] then
-         local snmpurl = "<A HREF='" .. ntop.getHttpPrefix() .. "/lua/pro/enterprise/snmp_device_details.lua?host="..snmpdevice.. "'>"..snmpdevice.."</A>"
+	    local function prepare_interface_url(idx, port)
+	       local snmp_utils = require "snmp_utils"
+	       local ifurl
 
-         local snmp_interfaces = cached_device["interfaces"]
-         local inputurl, outputurl
-
-         local function prepare_interface_url(idx, port)
-            local ifurl
-
-	    if port then
-	       local label = port["index"]
-
-	       if port["name"] and port["name"] ~= "" then
-	          label = shortenString(port["name"])
+	       if port then
+		  ifurl = "<A HREF='" .. ntop.getHttpPrefix() .. "/lua/pro/enterprise/snmp_interface_details.lua?host="..snmpdevice.."&snmp_port_idx="..port["index"].."'>"..snmp_utils.get_snmp_interface_label(port).."</A>"
+	       else
+		  ifurl = idx
 	       end
 
-	       ifurl = "<A HREF='" .. ntop.getHttpPrefix() .. "/lua/pro/enterprise/snmp_interface_details.lua?host="..dev.."&snmp_port_idx="..port["index"].."'>"..label.."</A>"
-	    else
-	       ifurl = idx
+	       return ifurl
 	    end
 
-	    return ifurl
-         end
+	    local inputurl
+	    local outputurl
 
-         local inputurl
-         local outputurl
-         
-         if input_idx then
-            inputurl = prepare_interface_url(input_idx, snmp_interfaces[input_idx])
-         end
-         if output_idx then
-            outputurl = prepare_interface_url(output_idx, snmp_interfaces[output_idx])
-         end
+	    if input_idx then
+	       inputurl = prepare_interface_url(input_idx, snmp_interfaces[input_idx])
+	    end
+	    if output_idx then
+	       outputurl = prepare_interface_url(output_idx, snmp_interfaces[output_idx])
+	    end
 
-         print("<tr><th rowspan='2'>"..i18n("details.flow_snmp_localization").."</th><th>"..i18n("snmp.snmp_device").."</th><th>"..i18n("details.input_device_port").." / "..i18n("details.output_device_port").."</th></tr>")
-         print("<tr><td>"..snmpurl.."</td><td>"..(inputurl or "").." / "..(outputurl or "").."</td></tr>")
+	    print("<tr><th rowspan='3'>"..i18n("details.flow_snmp_localization").."</th><th>"..i18n("snmp.snmp_device").."</th><td>"..snmpurl.."</td></tr>")
+	    print("<tr><th>"..i18n("details.input_device_port").."</th><td>"..(inputurl or "").." (".. input_idx ..")</td></tr>")
+	    print("<tr><th>"..i18n("details.output_device_port").."</th><td>"..(outputurl or "").."(".. output_idx ..")</td></tr>")
+	    printed = true
+	 end
       end
-   else
-      print("<tr><th>"..i18n("details.input_device_port").." / "..i18n("details.output_device_port").."</th>")
-      print("<td colspan=\"2\">"..(input_idx or "").." / "..(output_idx or "").."</td></tr>")
+   end
+
+   if(printed == false) then
+      print("<tr><th rowspan='2'>"..i18n("details.flow_snmp_localization").."</th><th>"..i18n("details.input_device_port").."</th><td>"..(input_idx or "").."</td></tr>")
+      print("<tr><th>"..i18n("details.output_device_port").."</th><td>"..(output_idx or "").."</td></tr>")
    end
 end
 
@@ -1392,12 +1421,10 @@ function printBlockFlowJs()
         var data = jQuery.parseJSON(content);
         var row_id = flow_key + "_" + flow_hash_id;
         if (data.status == "BLOCKED") {
-          $('#'+row_id+'_info').find('.block-badge')
+          $('#'+row_id+'_block')
             .removeClass('badge-secondary')
             .addClass('badge-danger')
             .attr('title', ']] print(i18n("flow_details.flow_traffic_is_dropped")) print[[');
-          $('#'+row_id+'_application, #'+row_id+'_l4, #'+row_id+'_client, #'+row_id+'_server')
-            .css("text-decoration", "line-through");
         }
       },
       error: function(content) {
@@ -1603,7 +1630,6 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 
        local entries = {
 	  {"normal", i18n("flows_page.normal")},
-	  {"misbehaving", i18n("flows_page.all_misbehaving")},
 	  {"alerted", i18n("flows_page.all_alerted")},
        }
 
@@ -1616,10 +1642,10 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
              if status_stats[t] and status_stats[t].count > 0 then
                if first then
                  entries[#entries + 1] = '<li role="separator" class="divider"></li>'
-                 entries[#entries + 1] = '<li class="dropdown-header">'.. i18n("flow_details.mibehaving_flows") ..'</li>'
+                 entries[#entries + 1] = '<li class="dropdown-header">'.. i18n("flow_details.alerted_flows") ..'</li>'
                  first = false
                end
-               entries[#entries + 1] = {string.format("%u", t), i18n(s.i18n_title) or s.i18n_title .. " ("..status_stats[t].count..")"}
+               entries[#entries + 1] = {string.format("%u", t), (i18n(s.i18n_title) or s.i18n_title) .. " ("..status_stats[t].count..")"}
              end
           end
        end
@@ -1629,7 +1655,37 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
        end
 
        printDropdownEntries(entries, base_url, flow_status_params, "flow_status", page_params.flow_status)
-    print[[\
+
+       print[[\
+	  </ul>\
+       </div>\
+    ']]
+
+       -- Flow Status Severity
+       local flow_status_severity_params = table.clone(page_params)
+       flow_status_severity_params["flow_status_severity"] = nil
+
+       print[[, '\
+       <div class="btn-group">\
+	  <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.flow_status_severity")) print(getParamFilter(page_params, "flow_status_severity")) print[[<span class="caret"></span></button>\
+	  <ul class="dropdown-menu scrollable-dropdown" role="menu">\
+	  <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, flow_status_severity_params)) print[[">]] print(i18n("flows_page.all_flows")) print[[</a></li>]]
+
+       local entries
+
+       entries = {}
+       local severity_stats = flowstats["alert_levels"]
+
+       for s, severity_details in pairsByField(alert_consts.severity_groups, "severity_group_id", asc) do
+
+	  if severity_stats[s] and severity_stats[s] > 0 then
+	     entries[#entries + 1] = {s, (i18n(severity_details.i18n_title) or s) .." ("..severity_stats[s]..")"}
+	  end
+       end
+
+       printDropdownEntries(entries, base_url, flow_status_severity_params, "flow_status_severity", page_params.flow_status_severity)
+
+       print[[\
 	  </ul>\
        </div>\
     ']]
@@ -1749,15 +1805,28 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
     print(getPageUrl(base_url, application_filter_params))
     print('">'..i18n("flows_page.all_proto")..'</a></li>')
 
-    for key, value in pairsByKeys(flowstats["ndpi"], asc) do
-       local class_active = ''
-       if(key == page_params.application) then
-	      class_active = 'active'
-       end
-       print('<li><a class="dropdown-item '..class_active..'" href="')
-       application_filter_params["application"] = key
+    if not isEmptyString(page_params["application"]) then
+       -- An application has been explicitly selected from the dropdown
+       -- so only that application is shown as dropdown a dropdown item.
+       -- The application will also include all sub-applications, e.g., DNS
+       -- will include DNS.Google, DNS.Facebook and so on.
+       print('<li><a class="dropdown-item active href="')
+       application_filter_params["application"] = page_params["application"]
        print(getPageUrl(base_url, application_filter_params))
-       print('">'..key..'</a></li>')
+       print('">'..page_params["application"]..'</a></li>')
+    else
+       -- No application selected in the dropdown. Show all the available applications
+       -- as reported in flowstats
+       for key, value in pairsByKeys(flowstats["ndpi"], asc) do
+	  local class_active = ''
+	  if(key == page_params.application) then
+	     class_active = 'active'
+	  end
+	  print('<li><a class="dropdown-item '..class_active..'" href="')
+	  application_filter_params["application"] = key
+	  print(getPageUrl(base_url, application_filter_params))
+	  print('">'..key..'</a></li>')
+       end
     end
 
     print("</ul> </div>'")
